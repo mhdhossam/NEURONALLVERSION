@@ -470,7 +470,7 @@ class NeuronGraph:
 
     def search(self, query: str, *, top_k: int = 5, max_hops: int = 2,
                damping: float = 0.75, region_id: Optional[str] = None,
-               workers: int = 1) -> list[dict[str, Any]]:
+               workers: int = 1, record_history: bool = True) -> list[dict[str, Any]]:
         """Search preprocessed candidates, propagate activation, and favor explicit relation answers.
 
         Query seeding remains lexical rather than semantic language understanding.
@@ -545,10 +545,11 @@ class NeuronGraph:
         ranked = sorted(results.values(), key=lambda row: (
             -row["score"], row["hops"], row["name"].casefold(), row["neuron_id"]
         ))
-        for row in ranked[:top_k]:
-            self.knowledge[row["knowledge_id"]].observe(
-                "retrieved", query=query, score=row["score"], path=row["path"]
-            )
+        if record_history:
+            for row in ranked[:top_k]:
+                self.knowledge[row["knowledge_id"]].observe(
+                    "retrieved", query=query, score=row["score"], path=row["path"]
+                )
         return ranked[:top_k]
 
     def get_relationships(self, neuron_id: str) -> list[dict[str, Any]]:

@@ -112,7 +112,7 @@ def summarize_ranks(ranks: list[int | None], latencies_ms: list[float]) -> dict:
     }
 
 
-def create_dataset(n_nodes: int) -> tuple[NeuronGraph, list[str], list[str], list[dict]]:
+def create_dataset(n_nodes: int) -> tuple[NeuronGraph, list[str], list[str], list[dict], float]:
     if n_nodes < 100 or n_nodes % 2:
         raise ValueError("node count must be an even integer >= 100")
     edge_count = n_nodes // 2

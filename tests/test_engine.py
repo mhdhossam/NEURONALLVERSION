@@ -161,6 +161,21 @@ class NeuronGraphTests(unittest.TestCase):
         self.assertEqual(rows[0]["matched_relation"], "works_on")
         self.assertEqual(rows[0]["path"], ["Mohamed", "Neuron"])
 
+    def test_search_can_skip_history_for_clean_benchmarking(self):
+        before = {
+            nid: len(knowledge.history)
+            for nid, knowledge in self.graph.knowledge.items()
+        }
+        rows = self.graph.search(
+            "Mohamed works_on what", top_k=3, workers=1, record_history=False
+        )
+        self.assertTrue(rows)
+        after = {
+            nid: len(knowledge.history)
+            for nid, knowledge in self.graph.knowledge.items()
+        }
+        self.assertEqual(after, before)
+
     def test_unknown_query_returns_no_guess(self):
         self.assertEqual(self.graph.search("nonexistent material", top_k=5), [])
         self.assertIsNone(self.graph.find_path(

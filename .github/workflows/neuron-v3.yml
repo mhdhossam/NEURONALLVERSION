@@ -1,15 +1,17 @@
-name: Neuron v3 tests
+name: Neuron v3 tests and benchmark
 
 on:
   push:
     paths:
       - "neuron_core/**"
       - "tests/**"
+      - "benchmarks/**"
       - ".github/workflows/neuron-v3.yml"
   pull_request:
     paths:
       - "neuron_core/**"
       - "tests/**"
+      - "benchmarks/**"
       - ".github/workflows/neuron-v3.yml"
 
 jobs:
@@ -21,3 +23,19 @@ jobs:
         with:
           python-version: "3.11"
       - run: python -m unittest discover -s tests -v
+
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run repeatable relational retrieval benchmark
+        run: python benchmarks/benchmark_retrieval.py --sizes 100,1000,5000 --top-k 5 --json-output benchmark-results.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: neuron-v3-benchmark-results
+          path: benchmark-results.json
+          if-no-files-found: error

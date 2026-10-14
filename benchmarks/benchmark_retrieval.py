@@ -100,7 +100,7 @@ class SparseTfidfIndex:
         return [nid for nid, _ in scored[:top_k]]
 
 
-def make_workload(n_nodes: int) -> tuple[NeuronGraph, SparseTfidfIndex, list[dict]]:
+def make_workload(n_nodes: int) -> tuple[NeuronGraph, SparseTfidfIndex, list[dict], float, float]:
     if n_nodes < 20 or n_nodes % 2:
         raise ValueError("node count must be an even integer >= 20")
     graph = NeuronGraph()

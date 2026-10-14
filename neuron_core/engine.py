@@ -20,7 +20,7 @@ SCHEMA_VERSION = 1
 # Small, explicit vocabulary used to map common query wording to typed graph edges.
 # These phrases are pre-indexed; they are not inferred by a neural model at query time.
 DEFAULT_RELATION_ALIASES: dict[str, tuple[str, ...]] = {
-    "profession": ("occupation", "job", "career", "work", "kind of work"),
+    "profession": ("occupation", "job", "career", "kind of work"),
     "specialty": ("expertise", "subject", "area of expertise", "skilled in"),
     "research_field": ("research area", "area", "study", "studies", "field of research"),
     "home_city": ("home town", "hometown", "live", "lives", "reside", "residence"),
@@ -340,7 +340,8 @@ class NeuronGraph:
     def spread_activation(self, seeds: Mapping[str, float] | Iterable[str], *,
                           max_hops: int = 3, damping: float = 0.75,
                           min_activation: float = 0.01, max_nodes: int = 500,
-                          workers: int = 1) -> list[ActivationResult]:
+                          workers: int = 1, commit_snapshot: bool = True
+                          ) -> list[ActivationResult]:
         """Propagate over the active frontier only.
 
         Expansion is parallelized in chunks when a frontier has enough edges.
@@ -430,18 +431,20 @@ class NeuronGraph:
                 if not frontier or len(scores) >= max_nodes:
                     break
 
-        # Avoid an O(total-neurons) reset. Clear only the prior touched set, then
-        # publish this query's snapshot. Query result values above remain local.
-        with self._activation_lock:
-            for nid in self._active_neuron_ids:
-                neuron = self.neurons.get(nid)
-                if neuron is not None:
-                    neuron.activation = 0.0
-                    neuron.last_active_step = 0
-            self._active_neuron_ids = set(scores)
-            for nid, score in scores.items():
-                self.neurons[nid].activation = min(1.0, score)
-                self.neurons[nid].last_active_step = hops_used[nid]
+        # Context-specific exploration can request query-local propagation without
+        # overwriting the public activation snapshot that represents the base pass.
+        if commit_snapshot:
+            # Avoid an O(total-neurons) reset. Clear only the prior touched set.
+            with self._activation_lock:
+                for nid in self._active_neuron_ids:
+                    neuron = self.neurons.get(nid)
+                    if neuron is not None:
+                        neuron.activation = 0.0
+                        neuron.last_active_step = 0
+                self._active_neuron_ids = set(scores)
+                for nid, score in scores.items():
+                    self.neurons[nid].activation = min(1.0, score)
+                    self.neurons[nid].last_active_step = hops_used[nid]
 
         results = [
             ActivationResult(nid, score, paths[nid], hops_used[nid])

@@ -85,7 +85,7 @@ print(trace["relation_hypotheses"])
 print(trace["activation_by_hop"])
 ```
 
-The trace includes lexical seeds, matched relation phrases, activation grouped by hop count, paths, and evidence values on traversed or relation-matched edges. It intentionally does not expose an `answer` or `decision` field; a downstream component can interpret this state according to the application's own policy. Calling the trace updates the graph's activation snapshot in the same way as a propagation pass, but does not append retrieval events to knowledge history.
+The trace includes lexical seeds, matched relation phrases, generic activation grouped by hop count, paths, and evidence values on traversed or relation-matched edges. For explicitly matched relations, it also preserves separate context-conditioned exploration branches per matching source edge; alternatives remain separate and no branch is selected as the answer. Branch propagation uses `commit_snapshot=False`, so it does not overwrite the public activation snapshot. The base trace pass updates that snapshot but does not append retrieval events to knowledge history. The `profession` aliases intentionally avoid the generic one-word alias `work`, which was ambiguous with workplace relationships.
 
 Run the context-variation probe:
 

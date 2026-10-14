@@ -21,6 +21,7 @@ def trace_processing(
     damping: float = 0.75,
     max_nodes: int = 500,
     workers: int = 1,
+    max_context_branches: int = 100,
 ) -> dict[str, Any]:
     """Return observable query-processing state without selecting an answer.
 
@@ -33,6 +34,8 @@ def trace_processing(
         raise ValueError("seed_limit must be >= 1")
     if max_nodes < 1:
         raise ValueError("max_nodes must be >= 1")
+    if max_context_branches < 1:
+        raise ValueError("max_context_branches must be >= 1")
 
     query_tokens = _tokens(query)
     seeds = graph.find_candidates(query, top_k=seed_limit)
@@ -88,6 +91,94 @@ def trace_processing(
             "seed_edges": edge_options,
         })
 
+    # Each explicitly matched relation gets its own exploratory branch.
+    # These branches preserve alternatives; they do not sort or select a winner.
+    context_branches: list[dict[str, Any]] = []
+    branches_truncated = False
+    seed_scores = {nid: max(0.25, score) for nid, score in seeds}
+
+    if max_hops >= 1:
+        for hypothesis in relation_hypotheses:
+            for edge_option in hypothesis["seed_edges"]:
+                if len(context_branches) >= max_context_branches:
+                    branches_truncated = True
+                    break
+                edge = graph.synapses[edge_option["synapse_id"]]
+                source_id = edge.source_id
+                signal = seed_scores.get(source_id, 0.0) * damping * edge.effective_strength
+                if signal < 0.01:
+                    continue
+
+                # This pass begins with the matched edge's target. It is query-local:
+                # the base activation snapshot stays intact when commit_snapshot=False.
+                branch_activation = graph.spread_activation(
+                    {edge.target_id: signal},
+                    max_hops=max(0, max_hops - 1),
+                    damping=damping,
+                    max_nodes=max_nodes,
+                    workers=workers,
+                    commit_snapshot=False,
+                )
+                branch_by_hop: dict[str, list[dict[str, Any]]] = {}
+                for item in sorted(
+                    branch_activation, key=lambda value: (value.hops, value.neuron_id)
+                ):
+                    path_ids = [source_id] + item.path
+                    path_names = [
+                        graph.knowledge[graph.neurons[nid].knowledge_id].name
+                        for nid in path_ids
+                    ]
+                    path_edges = []
+                    for path_index, (from_id, to_id) in enumerate(
+                        zip(path_ids, path_ids[1:])
+                    ):
+                        if path_index == 0:
+                            possible_edges = [edge]
+                        else:
+                            possible_edges = [
+                                graph.synapses[sid]
+                                for sid in graph._outgoing.get(from_id, ())
+                                if graph.synapses[sid].target_id == to_id
+                            ]
+                        path_edges.append({
+                            "from_id": from_id,
+                            "to_id": to_id,
+                            "edge_options": [{
+                                "synapse_id": candidate.id,
+                                "relation": candidate.relation,
+                                "weight": candidate.weight,
+                                "support": candidate.support,
+                                "contradiction": candidate.contradiction,
+                                "confidence": candidate.confidence,
+                                "effective_strength": candidate.effective_strength,
+                            } for candidate in possible_edges],
+                        })
+                    neuron = graph.neurons[item.neuron_id]
+                    knowledge = graph.knowledge[neuron.knowledge_id]
+                    branch_by_hop.setdefault(str(item.hops + 1), []).append({
+                        "neuron_id": neuron.id,
+                        "knowledge_id": knowledge.id,
+                        "name": knowledge.name,
+                        "kind": knowledge.kind,
+                        "activation": round(item.score, 8),
+                        "hops": item.hops + 1,
+                        "path": path_names,
+                        "path_edges": path_edges,
+                    })
+
+                context_branches.append({
+                    "source": graph.knowledge[
+                        graph.neurons[source_id].knowledge_id
+                    ].name,
+                    "source_id": source_id,
+                    "relation": hypothesis["relation"],
+                    "matched_aliases": list(hypothesis["matched_aliases"]),
+                    "first_edge": dict(edge_option),
+                    "activation_by_hop": branch_by_hop,
+                })
+            if branches_truncated:
+                break
+
     active_by_hop: dict[str, list[dict[str, Any]]] = {}
     for item in sorted(activation, key=lambda value: (value.hops, value.neuron_id)):
         neuron = graph.neurons[item.neuron_id]
@@ -140,6 +231,8 @@ def trace_processing(
         ],
         "relation_hypotheses": relation_hypotheses,
         "activation_by_hop": active_by_hop,
+        "context_branches": context_branches,
+        "context_branches_truncated": branches_truncated,
         "active_concept_count": len(activation),
         "note": (
             "Intermediate processing trace only. It does not identify a correct answer "

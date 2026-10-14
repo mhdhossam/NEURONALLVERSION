@@ -242,6 +242,19 @@ class ProcessingTraceTests(unittest.TestCase):
             {item["name"] for group in residence["activation_by_hop"].values() for item in group},
         )
         self.assertNotIn("answer", residence)
+        self.assertEqual(
+            {branch["first_edge"]["target"] for branch in residence["context_branches"]},
+            {"Cairo"},
+        )
+        self.assertEqual(
+            {branch["first_edge"]["target"] for branch in workplace["context_branches"]},
+            {"Cairo Robotics"},
+        )
+        self.assertEqual(
+            {branch["first_edge"]["target"] for branch in birthplace["context_branches"]},
+            {"Amman"},
+        )
+        self.assertEqual(vague["context_branches"], [])
 
     def test_processing_trace_exposes_conflicting_evidence_without_selecting(self):
         graph = NeuronGraph()
@@ -268,6 +281,33 @@ class ProcessingTraceTests(unittest.TestCase):
         self.assertEqual(before_history, after_history)
         self.assertNotIn("answer", trace)
         self.assertNotIn("decision", trace)
+        branch_targets = {branch["first_edge"]["target"] for branch in trace["context_branches"]}
+        self.assertEqual(branch_targets, {"Senior Platform Engineer", "Aardvark Consultant"})
+        branch_confidence = {
+            branch["first_edge"]["target"]: branch["first_edge"]["confidence"]
+            for branch in trace["context_branches"]
+        }
+        self.assertGreater(
+            branch_confidence["Senior Platform Engineer"],
+            branch_confidence["Aardvark Consultant"],
+        )
+
+    def test_noncommitting_activation_does_not_replace_public_snapshot(self):
+        graph = NeuronGraph()
+        a = graph.add_concept("A")
+        b = graph.add_concept("B")
+        graph.connect(a, b, "points_to")
+        graph.spread_activation([a], max_hops=0, commit_snapshot=True)
+        before_active = set(graph._active_neuron_ids)
+        before_values = {nid: graph.neurons[nid].activation for nid in graph.neurons}
+
+        graph.spread_activation([b], max_hops=0, commit_snapshot=False)
+
+        self.assertEqual(graph._active_neuron_ids, before_active)
+        self.assertEqual(
+            {nid: graph.neurons[nid].activation for nid in graph.neurons},
+            before_values,
+        )
 
     def test_processing_trace_shows_intermediate_hop_paths(self):
         graph = NeuronGraph()

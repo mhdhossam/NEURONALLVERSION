@@ -138,6 +138,17 @@ def main() -> None:
         })
         active_names = names_from_trace(trace)
         seed_names = {item["name"] for item in trace["lexical_seeds"]}
+        context_branch_summaries = [{
+            "source": branch["source"],
+            "relation": branch["relation"],
+            "aliases": branch["matched_aliases"],
+            "first_target": branch["first_edge"]["target"],
+            "active_names": sorted({
+                node["name"]
+                for items in branch["activation_by_hop"].values()
+                for node in items
+            }),
+        } for branch in trace["context_branches"]]
         first_hop_by_name = {
             item["name"]: int(hop)
             for hop, items in trace["activation_by_hop"].items()
@@ -163,6 +174,7 @@ def main() -> None:
             "trace": trace,
             "derived_observations": {
                 "matched_relations": relation_names,
+                "context_branch_summaries": context_branch_summaries,
                 "lexical_seed_names": sorted(seed_names),
                 "active_names": sorted(active_names),
                 "active_count": len(active_names),

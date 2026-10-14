@@ -295,7 +295,7 @@ class NeuronGraph:
     def spread_activation(self, seeds: Mapping[str, float] | Iterable[str], *,
                           max_hops: int = 3, damping: float = 0.75,
                           min_activation: float = 0.01, max_nodes: int = 500,
-                          workers: int = 4) -> list[ActivationResult]:
+                          workers: int = 1) -> list[ActivationResult]:
         """Propagate over the active frontier only.
 
         Expansion is parallelized in chunks when a frontier has enough edges.
@@ -470,7 +470,7 @@ class NeuronGraph:
 
     def search(self, query: str, *, top_k: int = 5, max_hops: int = 2,
                damping: float = 0.75, region_id: Optional[str] = None,
-               workers: int = 4) -> list[dict[str, Any]]:
+               workers: int = 1) -> list[dict[str, Any]]:
         """Search preprocessed candidates, propagate activation, and favor explicit relation answers.
 
         Query seeding remains lexical rather than semantic language understanding.

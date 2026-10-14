@@ -17,9 +17,9 @@ The research notebooks contain several competing versions of Neuron, Region, and
 - **Candidate index:** an in-memory token-to-neuron inverted index retrieves candidates from matching postings instead of rebuilding and scanning every neuron's text on each query.
 - **Relationship index:** typed outgoing edges are bucketed by relation, allowing relation-directed lookup without scanning all synapses.
 - **Activation:** bounded, query-local propagation with a hop limit, damping, activation floor, and node cap. Only nodes touched in the prior/current activation snapshot are updated; there is no full-network reset.
-- **Parallel frontier:** propagation can process sufficiently large edge frontiers in chunks using threads (\`workers=4\` by default). Small frontiers stay serial to avoid scheduling overhead. Since pure-Python CPU work is constrained by the CPython GIL, threading is a correctness/concurrency feature whose speed benefit must be measured, not assumed.
+- **Parallel frontier:** propagation can process sufficiently large edge frontiers in chunks using threads (`workers=4` by default). Small frontiers stay serial to avoid scheduling overhead. Since pure-Python CPU work is constrained by the CPython GIL, threading is a correctness/concurrency feature whose speed benefit must be measured, not assumed.
 - **Retrieval:** indexed lexical candidates followed by graph-assisted retrieval; explicit relation matches can prioritize the connected target and return an inspectable path.
-- **Metadata refresh:** call \`refresh_neuron_metadata(neuron_id)\` after editing a neuron's content/metadata or its knowledge attributes directly. Call \`rebuild_search_index()\` after bulk edits.
+- **Metadata refresh:** call `refresh_neuron_metadata(neuron_id)` after editing a neuron's content/metadata or its knowledge attributes directly. Call `rebuild_search_index()` after bulk edits.
 - **Feedback:** confidence changes only when explicit evidence or feedback is recorded, not merely because an item wins retrieval.
 - **Persistence:** versioned JSON save/load with reference validation and indexes rebuilt during load.
 

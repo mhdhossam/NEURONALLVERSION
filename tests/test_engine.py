@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from neuron_core import NeuronGraph
+from neuron_core import NeuronGraph, trace_processing
 
 
 class NeuronGraphTests(unittest.TestCase):
@@ -203,6 +203,91 @@ class NeuronGraphTests(unittest.TestCase):
         self.assertIsNone(self.graph.find_path(
             self.mohamed, self.graph_project, relation="is_identical_to"
         ))
+
+
+class ProcessingTraceTests(unittest.TestCase):
+    def test_context_changes_relation_hypotheses_without_forcing_an_answer(self):
+        graph = NeuronGraph()
+        jordan = graph.add_concept("Jordan Lee", kind="person")
+        cairo = graph.add_concept("Cairo", kind="city")
+        office = graph.add_concept("Cairo Robotics", kind="organization")
+        amman = graph.add_concept("Amman", kind="city")
+        graph.connect(jordan, cairo, "lives_in")
+        graph.connect(jordan, office, "works_at")
+        graph.connect(jordan, amman, "born_in")
+        graph.add_relation_alias("lives_in", "live")
+        graph.add_relation_alias("works_at", "office")
+        graph.add_relation_alias("born_in", "born")
+
+        vague = trace_processing(graph, "Where is Jordan Lee based?")
+        residence = trace_processing(graph, "Where does Jordan Lee live?")
+        workplace = trace_processing(graph, "Which office does Jordan Lee work at?")
+        birthplace = trace_processing(graph, "Where was Jordan Lee born?")
+
+        self.assertEqual(vague["relation_hypotheses"], [])
+        self.assertEqual(
+            [item["relation"] for item in residence["relation_hypotheses"]],
+            ["lives_in"],
+        )
+        self.assertIn("works_at", {
+            item["relation"] for item in workplace["relation_hypotheses"]
+        })
+        self.assertIn("born_in", {
+            item["relation"] for item in birthplace["relation_hypotheses"]
+        })
+        # Current architecture recognizes context phrases but its raw spreading
+        # remains generic; documenting this invariant makes the gap measurable.
+        self.assertEqual(
+            {item["name"] for group in vague["activation_by_hop"].values() for item in group},
+            {item["name"] for group in residence["activation_by_hop"].values() for item in group},
+        )
+        self.assertNotIn("answer", residence)
+
+    def test_processing_trace_exposes_conflicting_evidence_without_selecting(self):
+        graph = NeuronGraph()
+        alex = graph.add_concept("Alex Kim", kind="person")
+        verified = graph.add_concept("Senior Platform Engineer", kind="profession")
+        disputed = graph.add_concept("Aardvark Consultant", kind="profession")
+        verified_edge = graph.connect(alex, verified, "profession")
+        disputed_edge = graph.connect(alex, disputed, "profession")
+        for _ in range(5):
+            graph.add_edge_evidence(verified_edge, positive=True, source="verified")
+        for _ in range(4):
+            graph.add_edge_evidence(disputed_edge, positive=False, source="correction")
+        graph.add_relation_alias("profession", "job")
+
+        before_history = {key: len(value.history) for key, value in graph.knowledge.items()}
+        trace = trace_processing(graph, "What is Alex Kim's job?")
+        after_history = {key: len(value.history) for key, value in graph.knowledge.items()}
+
+        relation = next(item for item in trace["relation_hypotheses"]
+                        if item["relation"] == "profession")
+        confidence = {edge["target"]: edge["confidence"] for edge in relation["seed_edges"]}
+        self.assertAlmostEqual(confidence["Senior Platform Engineer"], 6 / 7)
+        self.assertAlmostEqual(confidence["Aardvark Consultant"], 1 / 6)
+        self.assertEqual(before_history, after_history)
+        self.assertNotIn("answer", trace)
+        self.assertNotIn("decision", trace)
+
+    def test_processing_trace_shows_intermediate_hop_paths(self):
+        graph = NeuronGraph()
+        nia = graph.add_concept("Nia Patel", kind="person")
+        lab = graph.add_concept("Helix Research Lab", kind="organization")
+        city = graph.add_concept("Alexandria", kind="city")
+        graph.connect(nia, lab, "directs")
+        graph.connect(lab, city, "located_in")
+
+        trace = trace_processing(
+            graph,
+            "Which city is home to the research center under Nia Patel's direction?",
+            max_hops=3,
+        )
+        at_hop_2 = trace["activation_by_hop"]["2"]
+        endpoint = next(item for item in at_hop_2 if item["name"] == "Alexandria")
+        self.assertEqual(endpoint["path"], ["Nia Patel", "Helix Research Lab", "Alexandria"])
+        self.assertEqual(endpoint["path_edges"][0]["edge_options"][0]["relation"], "directs")
+        self.assertEqual(endpoint["path_edges"][1]["edge_options"][0]["relation"], "located_in")
+
 
 
 if __name__ == "__main__":

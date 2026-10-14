@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 import json
@@ -9,6 +11,7 @@ import math
 from pathlib import Path
 import re
 import tempfile
+from threading import Lock
 from typing import Any, Iterable, Mapping, Optional
 from uuid import uuid4
 
@@ -75,8 +78,10 @@ class Neuron:
     metadata: dict[str, Any] = field(default_factory=dict)
     support: float = 0.0
     contradiction: float = 0.0
-    activation: float = 0.0  # latest retrieval cycle only
+    activation: float = 0.0  # most recent committed activation snapshot
     last_active_step: int = 0
+    search_text: str = ""  # prepared once; refresh after changing source knowledge
+    search_tokens: list[str] = field(default_factory=list)
 
     @property
     def confidence(self) -> float:
@@ -129,6 +134,12 @@ class NeuronGraph:
         self.synapses: dict[str, Synapse] = {}
         self.regions: dict[str, Region] = {}
         self._outgoing: dict[str, list[str]] = {}
+        self._outgoing_by_relation: dict[str, dict[str, list[str]]] = {}
+        self._token_index: dict[str, set[str]] = {}
+        self._relation_token_index: dict[str, set[str]] = {}
+        self._relation_tokens: dict[str, set[str]] = {}
+        self._active_neuron_ids: set[str] = set()
+        self._activation_lock = Lock()
 
     def add_concept(
         self, name: str, *, kind: str = "concept", content: str = "",
@@ -159,7 +170,42 @@ class NeuronGraph:
             content=content, metadata=dict(metadata or {}),
         )
         self._outgoing[nid] = []
+        self._outgoing_by_relation[nid] = {}
+        self._index_neuron(nid)
         return nid
+
+    def _index_neuron(self, neuron_id: str) -> None:
+        """Preprocess one neuron's searchable metadata and refresh its postings."""
+        neuron = self._require_neuron(neuron_id)
+        for token in neuron.search_tokens:
+            posting = self._token_index.get(token)
+            if posting is not None:
+                posting.discard(neuron_id)
+                if not posting:
+                    del self._token_index[token]
+
+        knowledge = self.knowledge[neuron.knowledge_id]
+        attrs = " ".join(f"{key} {value}" for key, value in knowledge.attributes.items())
+        prepared_text = " ".join([
+            neuron.name, neuron.kind, neuron.content, str(neuron.metadata),
+            attrs, knowledge.name,
+        ])
+        prepared_tokens = _tokens(prepared_text)
+        neuron.search_text = prepared_text
+        neuron.search_tokens = sorted(prepared_tokens)
+        for token in prepared_tokens:
+            self._token_index.setdefault(token, set()).add(neuron_id)
+
+    def refresh_neuron_metadata(self, neuron_id: str) -> None:
+        """Re-preprocess a neuron after its content, metadata, or knowledge attributes change."""
+        self._index_neuron(neuron_id)
+
+    def rebuild_search_index(self) -> None:
+        """Rebuild the in-memory inverted index after bulk knowledge edits."""
+        self._token_index = {}
+        for neuron_id in self.neurons:
+            # _index_neuron also removes the old postings when present.
+            self._index_neuron(neuron_id)
 
     def add_region(self, name: str, *, domain: str = "general",
                    region_id: Optional[str] = None) -> str:
@@ -192,6 +238,11 @@ class NeuronGraph:
         edge = Synapse(sid, source_id, target_id, relation.strip(), weight=w)
         self.synapses[sid] = edge
         self._outgoing[source_id].append(sid)
+        self._outgoing_by_relation[source_id].setdefault(edge.relation, []).append(sid)
+        relation_tokens = _tokens(edge.relation.replace("_", " "))
+        self._relation_tokens[edge.relation] = relation_tokens
+        for token in relation_tokens:
+            self._relation_token_index.setdefault(token, set()).add(edge.relation)
         source = self.neurons[source_id]
         target = self.neurons[target_id]
         source_knowledge = self.knowledge[source.knowledge_id]
@@ -243,12 +294,20 @@ class NeuronGraph:
 
     def spread_activation(self, seeds: Mapping[str, float] | Iterable[str], *,
                           max_hops: int = 3, damping: float = 0.75,
-                          min_activation: float = 0.01,
-                          max_nodes: int = 500) -> list[ActivationResult]:
+                          min_activation: float = 0.01, max_nodes: int = 500,
+                          workers: int = 4) -> list[ActivationResult]:
+        """Propagate over the active frontier only.
+
+        Expansion is parallelized in chunks when a frontier has enough edges.
+        Activation scores remain query-local; only nodes touched by this cycle or
+        the previous committed cycle are updated in the public activation snapshot.
+        """
         if max_hops < 0:
             raise ValueError("max_hops must be >= 0")
         if max_nodes < 1:
             raise ValueError("max_nodes must be >= 1")
+        if workers < 1:
+            raise ValueError("workers must be >= 1")
         damp = _bounded_number(damping, "damping", 0.0, 1.0)
         floor = _bounded_number(min_activation, "min_activation", 0.0, 1.0)
         raw_seeds = seeds.items() if isinstance(seeds, Mapping) else ((nid, 1.0) for nid in seeds)
@@ -265,40 +324,80 @@ class NeuronGraph:
         paths = {nid: [nid] for nid in seed_scores}
         hops_used = {nid: 0 for nid in seed_scores}
         frontier = dict(seed_scores)
-        for hop in range(1, max_hops + 1):
-            next_frontier: dict[str, float] = {}
-            next_paths: dict[str, list[str]] = {}
-            for source_id in sorted(frontier):
-                for sid in self._outgoing.get(source_id, []):
-                    edge = self.synapses[sid]
-                    target_id = edge.target_id
-                    signal = frontier[source_id] * damp * edge.effective_strength
-                    if signal < floor or target_id in paths[source_id]:
-                        continue
-                    if signal > next_frontier.get(target_id, 0.0):
-                        next_frontier[target_id] = signal
-                        next_paths[target_id] = paths[source_id] + [target_id]
-            if not next_frontier:
-                break
-            for nid in sorted(next_frontier):
-                if nid not in scores and len(scores) >= max_nodes:
-                    continue
-                if next_frontier[nid] > scores.get(nid, 0.0):
-                    scores[nid] = next_frontier[nid]
-                    paths[nid] = next_paths[nid]
-                    hops_used[nid] = hop
-            frontier = {
-                nid: score for nid, score in next_frontier.items()
-                if nid in scores and hops_used.get(nid) == hop
-            }
-            if not frontier or len(scores) >= max_nodes:
-                break
 
-        for neuron in self.neurons.values():
-            neuron.activation = 0.0
-        for nid, score in scores.items():
-            self.neurons[nid].activation = min(1.0, score)
-            self.neurons[nid].last_active_step = hops_used[nid]
+        def expand_chunk(jobs: list[tuple[str, str, float, tuple[str, ...]]]
+                         ) -> list[tuple[str, str, float, list[str]]]:
+            expanded = []
+            for source_id, sid, source_score, source_path in jobs:
+                edge = self.synapses[sid]
+                signal = source_score * damp * edge.effective_strength
+                target_id = edge.target_id
+                if signal < floor or target_id in source_path:
+                    continue
+                expanded.append((
+                    source_id, target_id, signal, list(source_path) + [target_id]
+                ))
+            return expanded
+
+        pool_context = ThreadPoolExecutor(max_workers=workers) if workers > 1 else nullcontext(None)
+        with pool_context as pool:
+            for hop in range(1, max_hops + 1):
+                jobs = [
+                    (source_id, sid, frontier[source_id], tuple(paths[source_id]))
+                    for source_id in sorted(frontier)
+                    for sid in self._outgoing.get(source_id, [])
+                ]
+                if not jobs:
+                    break
+
+                # Thread work is deliberately chunked to reduce scheduling overhead.
+                # For small frontiers, the serial path is both simpler and often faster.
+                chunk_count = min(workers, len(jobs))
+                should_parallelize = pool is not None and len(jobs) >= max(16, workers * 4)
+                if should_parallelize:
+                    chunk_size = (len(jobs) + chunk_count - 1) // chunk_count
+                    chunks = [jobs[i:i + chunk_size] for i in range(0, len(jobs), chunk_size)]
+                    expanded_batches = pool.map(expand_chunk, chunks)
+                else:
+                    expanded_batches = (expand_chunk(jobs),)
+
+                next_frontier: dict[str, float] = {}
+                next_paths: dict[str, list[str]] = {}
+                for expanded in expanded_batches:
+                    for source_id, target_id, signal, candidate_path in expanded:
+                        if signal > next_frontier.get(target_id, 0.0):
+                            next_frontier[target_id] = signal
+                            next_paths[target_id] = candidate_path
+
+                if not next_frontier:
+                    break
+                for nid in sorted(next_frontier):
+                    if nid not in scores and len(scores) >= max_nodes:
+                        continue
+                    if next_frontier[nid] > scores.get(nid, 0.0):
+                        scores[nid] = next_frontier[nid]
+                        paths[nid] = next_paths[nid]
+                        hops_used[nid] = hop
+                frontier = {
+                    nid: score for nid, score in next_frontier.items()
+                    if nid in scores and hops_used.get(nid) == hop
+                }
+                if not frontier or len(scores) >= max_nodes:
+                    break
+
+        # Avoid an O(total-neurons) reset. Clear only the prior touched set, then
+        # publish this query's snapshot. Query result values above remain local.
+        with self._activation_lock:
+            for nid in self._active_neuron_ids:
+                neuron = self.neurons.get(nid)
+                if neuron is not None:
+                    neuron.activation = 0.0
+                    neuron.last_active_step = 0
+            self._active_neuron_ids = set(scores)
+            for nid, score in scores.items():
+                self.neurons[nid].activation = min(1.0, score)
+                self.neurons[nid].last_active_step = hops_used[nid]
+
         results = [
             ActivationResult(nid, score, paths[nid], hops_used[nid])
             for nid, score in scores.items()
@@ -340,6 +439,7 @@ class NeuronGraph:
 
     def find_candidates(self, query: str, *, top_k: int = 5,
                         region_id: Optional[str] = None) -> list[tuple[str, float]]:
+        """Retrieve lexical candidates through preprocessed token postings."""
         if top_k < 1:
             raise ValueError("top_k must be >= 1")
         query_terms = _tokens(query)
@@ -351,28 +451,31 @@ class NeuronGraph:
             if region is None:
                 raise KeyError(f"unknown region: {region_id}")
             allowed = set(region.neuron_ids)
+
+        # Candidate discovery jumps directly to postings for query terms.
+        candidate_ids: set[str] = set()
+        for token in query_terms:
+            candidate_ids.update(self._token_index.get(token, ()))
+        if allowed is not None:
+            candidate_ids.intersection_update(allowed)
+
         scored = []
-        for nid, neuron in self.neurons.items():
-            if allowed is not None and nid not in allowed:
-                continue
-            ko = self.knowledge[neuron.knowledge_id]
-            attrs = " ".join(f"{k} {v}" for k, v in ko.attributes.items())
-            text = " ".join([
-                neuron.name, neuron.kind, neuron.content, str(neuron.metadata), attrs, ko.name
-            ])
-            terms = _tokens(text)
-            overlap = len(query_terms & terms) / len(query_terms) if terms else 0.0
+        for nid in candidate_ids:
+            neuron = self.neurons[nid]
+            overlap = len(query_terms.intersection(neuron.search_tokens)) / len(query_terms)
             if overlap > 0:
                 scored.append((nid, overlap))
         scored.sort(key=lambda p: (-p[1], self.neurons[p[0]].name.casefold(), p[0]))
         return scored[:top_k]
 
     def search(self, query: str, *, top_k: int = 5, max_hops: int = 2,
-               damping: float = 0.75, region_id: Optional[str] = None) -> list[dict[str, Any]]:
-        """Lexically seed candidates, then return related context through the graph.
+               damping: float = 0.75, region_id: Optional[str] = None,
+               workers: int = 4) -> list[dict[str, Any]]:
+        """Search preprocessed candidates, propagate activation, and favor explicit relation answers.
 
-        Candidate matching is deliberately a simple baseline, not semantic
-        language understanding. An embedding encoder can be added at this boundary.
+        Query seeding remains lexical rather than semantic language understanding.
+        When a query names a relationship (for example, "A uses what?"), direct
+        matching outgoing edges receive an explicit answer-ranking bonus.
         """
         if top_k < 1:
             raise ValueError("top_k must be >= 1")
@@ -383,29 +486,69 @@ class NeuronGraph:
         activation = self.spread_activation(
             {nid: max(0.25, score) for nid, score in seeds},
             max_hops=max_hops, damping=damping, max_nodes=max(100, top_k * 10),
+            workers=workers,
         )
         lexical = dict(seeds)
-        results = []
+        results: dict[str, dict[str, Any]] = {}
         for item in activation:
             neuron = self.neurons[item.neuron_id]
             ko = self.knowledge[neuron.knowledge_id]
             score = 0.7 * item.score + 0.3 * lexical.get(neuron.id, 0.0)
-            results.append({
+            results[neuron.id] = {
                 "neuron_id": neuron.id, "knowledge_id": ko.id, "name": ko.name,
                 "kind": ko.kind, "score": round(min(1.0, score), 6),
                 "lexical_score": round(lexical.get(neuron.id, 0.0), 6),
                 "activation": round(item.score, 6),
                 "path": [self.neurons[nid].name for nid in item.path],
                 "hops": item.hops, "attributes": dict(ko.attributes),
-            })
-        results.sort(key=lambda row: (
+            }
+
+        # Relation lookup is indexed by relation tokens; only seed neurons' matching
+        # outgoing relation buckets are visited. No whole-graph edge scan is needed.
+        query_terms = _tokens(query.replace("?", " ").replace("!", " ").replace(".", " "))
+        relation_candidates: set[str] = set()
+        for token in query_terms:
+            relation_candidates.update(self._relation_token_index.get(token, ()))
+        matching_relations = {
+            relation for relation in relation_candidates
+            if self._relation_tokens.get(relation)
+            and self._relation_tokens[relation].issubset(query_terms)
+        }
+        seed_scores = dict(seeds)
+        for source_id, seed_score in seeds:
+            outgoing_by_relation = self._outgoing_by_relation.get(source_id, {})
+            for relation in matching_relations:
+                for sid in outgoing_by_relation.get(relation, ()):
+                    edge = self.synapses[sid]
+                    target = self.neurons[edge.target_id]
+                    ko = self.knowledge[target.knowledge_id]
+                    direct_score = min(1.0, 0.6 + 0.4 * min(1.0, seed_score * edge.weight))
+                    row = results.get(target.id)
+                    if row is None:
+                        row = {
+                            "neuron_id": target.id, "knowledge_id": ko.id, "name": ko.name,
+                            "kind": ko.kind, "score": round(direct_score, 6),
+                            "lexical_score": round(lexical.get(target.id, 0.0), 6),
+                            "activation": round(target.activation, 6),
+                            "path": [self.neurons[source_id].name, target.name],
+                            "hops": 1, "attributes": dict(ko.attributes),
+                        }
+                        results[target.id] = row
+                    elif direct_score > row["score"]:
+                        row["score"] = round(direct_score, 6)
+                        row["path"] = [self.neurons[source_id].name, target.name]
+                        row["hops"] = 1
+                    row["relation_score"] = round(direct_score, 6)
+                    row["matched_relation"] = relation
+
+        ranked = sorted(results.values(), key=lambda row: (
             -row["score"], row["hops"], row["name"].casefold(), row["neuron_id"]
         ))
-        for row in results[:top_k]:
+        for row in ranked[:top_k]:
             self.knowledge[row["knowledge_id"]].observe(
                 "retrieved", query=query, score=row["score"], path=row["path"]
             )
-        return results[:top_k]
+        return ranked[:top_k]
 
     def get_relationships(self, neuron_id: str) -> list[dict[str, Any]]:
         self._require_neuron(neuron_id)
@@ -468,6 +611,8 @@ class NeuronGraph:
             item = dict(raw)
             graph.neurons[item["id"]] = Neuron(**item)
             graph._outgoing[item["id"]] = []
+            graph._outgoing_by_relation[item["id"]] = {}
+            graph._index_neuron(item["id"])
         for raw in payload.get("synapses", []):
             item = dict(raw)
             item["evidence"] = [Evidence(**ev) for ev in item.get("evidence", [])]
@@ -476,6 +621,11 @@ class NeuronGraph:
                 raise ValueError(f"synapse {edge.id} references a missing neuron")
             graph.synapses[edge.id] = edge
             graph._outgoing[edge.source_id].append(edge.id)
+            graph._outgoing_by_relation[edge.source_id].setdefault(edge.relation, []).append(edge.id)
+            relation_tokens = _tokens(edge.relation.replace("_", " "))
+            graph._relation_tokens[edge.relation] = relation_tokens
+            for token in relation_tokens:
+                graph._relation_token_index.setdefault(token, set()).add(edge.relation)
         for raw in payload.get("regions", []):
             item = dict(raw)
             graph.regions[item["id"]] = Region(**item)

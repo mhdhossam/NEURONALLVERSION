@@ -41,6 +41,16 @@ RELATIONS = [
     "profession", "specialty", "research_field", "home_city",
     "primary_tool", "affiliation", "discipline", "invention",
 ]
+PARAPHRASE_TEMPLATES = {
+    "profession": "What kind of work does {source} do?",
+    "specialty": "Which subject is {source} especially skilled in?",
+    "research_field": "What area does {source} study?",
+    "home_city": "Where does {source} live?",
+    "primary_tool": "Which tool does {source} mainly use?",
+    "affiliation": "Which organization is {source} connected with?",
+    "discipline": "What subject does {source} work in?",
+    "invention": "What did {source} create?",
+}
 FIRST_NAMES = [
     "Ada", "Grace", "Alan", "Marie", "Katherine", "Margaret", "Claude",
     "Barbara", "Donald", "Edsger", "Frances", "Emmy", "Rosalind", "Hedy",
@@ -112,7 +122,7 @@ def summarize_ranks(ranks: list[int | None], latencies_ms: list[float]) -> dict:
     }
 
 
-def create_dataset(n_nodes: int) -> tuple[NeuronGraph, list[str], list[str], list[dict], float]:
+def create_dataset(n_nodes: int) -> tuple[NeuronGraph, list[str], list[str], dict[str, list[dict]], float]:
     if n_nodes < 100 or n_nodes % 2:
         raise ValueError("node count must be an even integer >= 100")
     edge_count = n_nodes // 2
@@ -141,18 +151,23 @@ def create_dataset(n_nodes: int) -> tuple[NeuronGraph, list[str], list[str], lis
         graph.connect(source_id, target_id, relation, weight=1.0)
         facts.append(f"{source_name}'s {relation_label} is {target_name}.")
         query_cases.append({
-            "query": f"What is {source_name}'s {relation_label}?",
+            "canonical_query": f"What is {source_name}'s {relation_label}?",
+            "paraphrase_query": PARAPHRASE_TEMPLATES[relation].format(source=source_name),
             "source_id": source_id,
             "target_id": target_id,
             "fact_index": i,
         })
 
     build_ms = (time.perf_counter() - started) * 1000.0
-    # Fixed, spread-out query sample. Use the same cases for both engines.
+    # Fixed, spread-out query sample. Both modes use precisely the same target cases.
     count = min(100, edge_count)
     step = max(1, edge_count // count)
     selected = query_cases[::step][:count]
-    return graph, facts, targets, selected, build_ms
+    cases_by_mode = {
+        "canonical": [{**case, "query": case["canonical_query"]} for case in selected],
+        "paraphrase": [{**case, "query": case["paraphrase_query"]} for case in selected],
+    }
+    return graph, facts, targets, cases_by_mode, build_ms
 
 
 def run_matrix_search(model, fact_embeddings: np.ndarray, query: str, top_k: int):
@@ -179,7 +194,7 @@ def run_matrix_search(model, fact_embeddings: np.ndarray, query: str, top_k: int
 
 
 def evaluate_size(model, n_nodes: int) -> dict:
-    graph, facts, targets, cases, graph_build_ms = create_dataset(n_nodes)
+    graph, facts, targets, cases_by_mode, graph_build_ms = create_dataset(n_nodes)
 
     matrix_build_started = time.perf_counter()
     fact_embeddings = model.encode(
@@ -189,64 +204,74 @@ def evaluate_size(model, n_nodes: int) -> dict:
     matrix_build_ms = (time.perf_counter() - matrix_build_started) * 1000.0
     fact_embeddings = np.ascontiguousarray(fact_embeddings, dtype=np.float32)
 
-    graph_ranks: list[int | None] = []
-    graph_latencies: list[float] = []
-    matrix_ranks: list[int | None] = []
-    matrix_full_latencies: list[float] = []
-    matrix_encode_latencies: list[float] = []
-    matrix_similarity_latencies: list[float] = []
+    modes: dict[str, dict] = {}
+    for mode, cases in cases_by_mode.items():
+        graph_ranks: list[int | None] = []
+        graph_latencies: list[float] = []
+        matrix_ranks: list[int | None] = []
+        matrix_full_latencies: list[float] = []
+        matrix_encode_latencies: list[float] = []
+        matrix_similarity_latencies: list[float] = []
 
-    # Warm both paths once so model initialization / one-time lazy work is excluded.
-    if cases:
-        graph.search(cases[0]["query"], top_k=TOP_K, max_hops=2, workers=1, record_history=False)
-        run_matrix_search(model, fact_embeddings, cases[0]["query"], TOP_K)
+        # Warm both paths once so first-call overhead is excluded from latency.
+        if cases:
+            graph.search(
+                cases[0]["query"], top_k=TOP_K, max_hops=2, workers=1,
+                record_history=False,
+            )
+            run_matrix_search(model, fact_embeddings, cases[0]["query"], TOP_K)
 
-    for case in cases:
-        started = time.perf_counter_ns()
-        graph_rows = graph.search(
-            case["query"], top_k=TOP_K, max_hops=2, workers=1, record_history=False
-        )
-        graph_latencies.append((time.perf_counter_ns() - started) / 1e6)
-        graph_ids = [row["neuron_id"] for row in graph_rows]
-        graph_ranks.append(
-            graph_ids.index(case["target_id"]) + 1 if case["target_id"] in graph_ids else None
-        )
+        for case in cases:
+            started = time.perf_counter_ns()
+            graph_rows = graph.search(
+                case["query"], top_k=TOP_K, max_hops=2, workers=1,
+                record_history=False,
+            )
+            graph_latencies.append((time.perf_counter_ns() - started) / 1e6)
+            graph_ids = [row["neuron_id"] for row in graph_rows]
+            graph_ranks.append(
+                graph_ids.index(case["target_id"]) + 1
+                if case["target_id"] in graph_ids else None
+            )
 
-        ranked_facts, encode_ms, similarity_ms, full_ms = run_matrix_search(
-            model, fact_embeddings, case["query"], TOP_K
-        )
-        matrix_encode_latencies.append(encode_ms)
-        matrix_similarity_latencies.append(similarity_ms)
-        matrix_full_latencies.append(full_ms)
-        target_ranking = [targets[index] for index in ranked_facts]
-        matrix_ranks.append(
-            target_ranking.index(case["target_id"]) + 1
-            if case["target_id"] in target_ranking else None
-        )
+            ranked_facts, encode_ms, similarity_ms, full_ms = run_matrix_search(
+                model, fact_embeddings, case["query"], TOP_K
+            )
+            matrix_encode_latencies.append(encode_ms)
+            matrix_similarity_latencies.append(similarity_ms)
+            matrix_full_latencies.append(full_ms)
+            target_ranking = [targets[index] for index in ranked_facts]
+            matrix_ranks.append(
+                target_ranking.index(case["target_id"]) + 1
+                if case["target_id"] in target_ranking else None
+            )
 
-    graph_metrics = summarize_ranks(graph_ranks, graph_latencies)
-    matrix_metrics = summarize_ranks(matrix_ranks, matrix_full_latencies)
+        modes[mode] = {
+            "graph": summarize_ranks(graph_ranks, graph_latencies),
+            "neural_matrix": {
+                **summarize_ranks(matrix_ranks, matrix_full_latencies),
+                "query_encoder_mean_ms": round(statistics.mean(matrix_encode_latencies), 4),
+                "matrix_similarity_mean_ms": round(statistics.mean(matrix_similarity_latencies), 4),
+            },
+        }
+
     return {
         "nodes": n_nodes,
         "edges_or_facts": len(facts),
-        "queries": len(cases),
+        "queries_per_mode": len(next(iter(cases_by_mode.values()))),
         "graph_build_and_preprocess_ms": round(graph_build_ms, 3),
         "matrix_fact_embedding_build_ms": round(matrix_build_ms, 3),
         "matrix_embedding_dimension": int(fact_embeddings.shape[1]),
         "matrix_embedding_bytes": int(fact_embeddings.nbytes),
-        "graph": graph_metrics,
-        "neural_matrix": {
-            **matrix_metrics,
-            "query_encoder_mean_ms": round(statistics.mean(matrix_encode_latencies), 4),
-            "matrix_similarity_mean_ms": round(statistics.mean(matrix_similarity_latencies), 4),
-        },
+        "modes": modes,
         "comparison_notes": [
-            "Same source-relation-target facts and same fixed queries.",
-            "Graph uses prepared token index, typed edges, and relation-aware traversal.",
-            "Neural baseline uses pretrained all-MiniLM-L6-v2 query/fact embeddings and dense matrix-vector dot products.",
-            "Neural end-to-end query latency includes query embedding generation and similarity ranking, but excludes one-time model download/load and fact embedding build.",
-            "Both methods return the same target IDs and are scored with Hit@1, Recall@3/5, and MRR.",
-            "Synthetic, template-based relational retrieval; not general reasoning or an independent real-world dataset.",
+            "Both modes use the same source-relation-target facts and same source/target cases.",
+            "Canonical query phrases contain the typed relation; paraphrase phrases express it with different words.",
+            "Graph uses a preprocessed token index, typed edges, and relation-aware traversal.",
+            "Neural baseline uses pretrained all-MiniLM-L6-v2 fact/query embeddings and dense matrix-vector dot products.",
+            "Neural end-to-end latency includes query embedding generation and similarity ranking, excluding one-time model load and fact-embedding build.",
+            "Both return the same target IDs and are scored with Hit@1, Recall@3/5, and MRR.",
+            "Synthetic template-based retrieval only; it is not a general reasoning or real-world language benchmark.",
         ],
     }
 
@@ -284,24 +309,28 @@ def main() -> None:
         "sizes": [evaluate_size(model, size) for size in sizes],
     }
     for result in report["sizes"]:
-        graph = result["graph"]
-        matrix = result["neural_matrix"]
         print(
-            f"\n{result['nodes']} nodes / {result['edges_or_facts']} facts / {result['queries']} queries"
+            f"\\n{result['nodes']} nodes / {result['edges_or_facts']} facts / "
+            f"{result['queries_per_mode']} queries per mode"
         )
-        print(
-            f"Graph: Hit@1={graph['hit_at_1']:.1%}, Recall@3={graph['recall_at_3']:.1%}, "
-            f"MRR={graph['mrr']:.3f}, mean={graph['mean_ms']:.4f} ms, p95={graph['p95_ms']:.4f} ms"
-        )
-        print(
-            f"Neural matrix: Hit@1={matrix['hit_at_1']:.1%}, Recall@3={matrix['recall_at_3']:.1%}, "
-            f"MRR={matrix['mrr']:.3f}, end-to-end mean={matrix['mean_ms']:.4f} ms, "
-            f"p95={matrix['p95_ms']:.4f} ms"
-        )
-        print(
-            f"  neural query encoder mean={matrix['query_encoder_mean_ms']:.4f} ms; "
-            f"dense similarity mean={matrix['matrix_similarity_mean_ms']:.4f} ms"
-        )
+        for mode, metrics in result["modes"].items():
+            graph = metrics["graph"]
+            matrix = metrics["neural_matrix"]
+            print(f"  {mode.upper()} queries")
+            print(
+                f"    Graph: Hit@1={graph['hit_at_1']:.1%}, Recall@3={graph['recall_at_3']:.1%}, "
+                f"MRR={graph['mrr']:.3f}, mean={graph['mean_ms']:.4f} ms, "
+                f"p95={graph['p95_ms']:.4f} ms"
+            )
+            print(
+                f"    Neural matrix: Hit@1={matrix['hit_at_1']:.1%}, "
+                f"Recall@3={matrix['recall_at_3']:.1%}, MRR={matrix['mrr']:.3f}, "
+                f"end-to-end mean={matrix['mean_ms']:.4f} ms, p95={matrix['p95_ms']:.4f} ms"
+            )
+            print(
+                f"      query encoder={matrix['query_encoder_mean_ms']:.4f} ms; "
+                f"matrix similarity={matrix['matrix_similarity_mean_ms']:.4f} ms"
+            )
         print(
             f"  graph build/preprocess={result['graph_build_and_preprocess_ms']:.2f} ms; "
             f"fact embedding build={result['matrix_fact_embedding_build_ms']:.2f} ms; "

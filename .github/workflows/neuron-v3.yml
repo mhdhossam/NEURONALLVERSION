@@ -39,3 +39,27 @@ jobs:
           name: neuron-v3-benchmark-results
           path: benchmark-results.json
           if-no-files-found: error
+
+  neural-matrix-comparison:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      TOKENIZERS_PARALLELISM: "false"
+      HF_HUB_DISABLE_PROGRESS_BARS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install pretrained embedding baseline
+        run: python -m pip install "sentence-transformers==6.1.0"
+      - name: Compare Neuron with dense neural embedding retrieval
+        run: python benchmarks/benchmark_neural_matrix_vs_graph.py --sizes 100,1000,5000 --json-output neuron-vs-matrix-results.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: neuron-vs-neural-matrix-results
+          path: neuron-vs-matrix-results.json
+          if-no-files-found: error

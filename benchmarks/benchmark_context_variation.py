@@ -144,6 +144,18 @@ def main() -> None:
             for item in items
         }
         expected_target = variant.get("expected_target")
+        expected_hop = variant.get("expected_hop")
+        if expected_target:
+            if expected_target in seed_names:
+                raise AssertionError(
+                    f"{variant['id']}: expected endpoint {expected_target!r} leaked into lexical seeds"
+                )
+            observed_hop = first_hop_by_name.get(expected_target)
+            if observed_hop != expected_hop:
+                raise AssertionError(
+                    f"{variant['id']}: expected {expected_target!r} at hop {expected_hop}, "
+                    f"observed {observed_hop}"
+                )
         traces.append({
             "id": variant["id"],
             "category_expected_as_probe": variant["expected_relations"],

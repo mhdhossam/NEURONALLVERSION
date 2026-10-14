@@ -90,8 +90,12 @@ def build_world() -> tuple[NeuronGraph, dict[str, str]]:
          source_kind="organization", target_kind="city")
     variants.append({
         "id": "multi_hop",
-        "query": "Which city is home to the research center under Nia Patel's direction?",
+        # Avoid target-kind leakage: "city" is part of the endpoint's indexed kind.
+        # The query names the starting entity but not the endpoint or intermediate node.
+        "query": "What place can be reached by following the institution Nia Patel directs?",
         "expected_relations": [],
+        "expected_target": "Alexandria",
+        "expected_hop": 2,
     })
     fact("Omar Selim", "employed_by", "Northstar Systems",
          source_kind="person", target_kind="organization")

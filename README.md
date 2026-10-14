@@ -64,3 +64,33 @@ This is an engineering milestone, not a claim of human-like understanding. It do
 ## Next research milestone
 
 Benchmark equivalent methods on the same fixed dataset: lexical retrieval, vector-only retrieval, graph-only traversal from known seeds, and hybrid vector-seeded graph retrieval. Report accuracy/recall, path relevance, latency, memory use, and unknown rejection. Do not compare insertion timings if one method builds links and another does not.
+
+
+## Processing trace (before a decision policy)
+
+The `trace_processing` helper exposes intermediate graph-processing state without choosing a final answer:
+
+```python
+from neuron_core import NeuronGraph, trace_processing
+
+brain = NeuronGraph()
+person = brain.add_concept("Jordan Lee", kind="person")
+city = brain.add_concept("Cairo", kind="city")
+brain.connect(person, city, "lives_in")
+brain.add_relation_alias("lives_in", "live")
+
+trace = trace_processing(brain, "Where does Jordan Lee live?")
+print(trace["lexical_seeds"])
+print(trace["relation_hypotheses"])
+print(trace["activation_by_hop"])
+```
+
+The trace includes lexical seeds, matched relation phrases, activation grouped by hop count, paths, and evidence values on traversed or relation-matched edges. It intentionally does not expose an `answer` or `decision` field; a downstream component can interpret this state according to the application's own policy. Calling the trace updates the graph's activation snapshot in the same way as a propagation pass, but does not append retrieval events to knowledge history.
+
+Run the context-variation probe:
+
+```bash
+python benchmarks/benchmark_context_variation.py --json-output context-processing-results.json
+```
+
+This probe compares several wordings over identical facts, including ambiguous wording, explicit residence/workplace/birthplace cues, a multi-hop chain, and contradictory evidence. It records whether relation interpretations and the active node set change. It is a behavioral diagnostic—not a literal simulation of human neurobiology.

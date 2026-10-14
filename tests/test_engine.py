@@ -152,6 +152,15 @@ class NeuronGraphTests(unittest.TestCase):
         self.assertEqual(rows[0]["matched_relation"], "uses")
         self.assertEqual(rows[0]["path"], ["Neuron", "Graph processing"])
 
+    def test_multiword_relation_query_uses_preprocessed_relation_index(self):
+        rows = self.graph.search(
+            "Mohamed works on what?", top_k=3, max_hops=2, workers=1
+        )
+        self.assertGreaterEqual(len(rows), 1)
+        self.assertEqual(rows[0]["neuron_id"], self.neuron)
+        self.assertEqual(rows[0]["matched_relation"], "works_on")
+        self.assertEqual(rows[0]["path"], ["Mohamed", "Neuron"])
+
     def test_unknown_query_returns_no_guess(self):
         self.assertEqual(self.graph.search("nonexistent material", top_k=5), [])
         self.assertIsNone(self.graph.find_path(

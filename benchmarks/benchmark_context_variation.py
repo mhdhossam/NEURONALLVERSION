@@ -101,8 +101,8 @@ def build_world() -> tuple[NeuronGraph, dict[str, str]]:
          source_kind="software", target_kind="programming_language")
     variants.append({
         "id": "three_hop",
-        "query": "Which programming language underpins the service at Omar Selim's employer?",
-        "expected_relations": [],
+        "query": "What language is used by the service connected through the company where Omar works?",
+        "expected_relations": [], "expected_target": "Rust", "expected_hop": 3,
     })
     return graph, {"variants": variants}
 
@@ -133,6 +133,13 @@ def main() -> None:
             item["relation"] for item in trace["relation_hypotheses"]
         })
         active_names = names_from_trace(trace)
+        seed_names = {item["name"] for item in trace["lexical_seeds"]}
+        first_hop_by_name = {
+            item["name"]: int(hop)
+            for hop, items in trace["activation_by_hop"].items()
+            for item in items
+        }
+        expected_target = variant.get("expected_target")
         traces.append({
             "id": variant["id"],
             "category_expected_as_probe": variant["expected_relations"],
@@ -140,8 +147,17 @@ def main() -> None:
             "trace": trace,
             "derived_observations": {
                 "matched_relations": relation_names,
+                "lexical_seed_names": sorted(seed_names),
                 "active_names": sorted(active_names),
                 "active_count": len(active_names),
+                "expected_target": expected_target,
+                "expected_target_was_lexically_seeded": (
+                    expected_target in seed_names if expected_target else None
+                ),
+                "expected_target_first_activation_hop": (
+                    first_hop_by_name.get(expected_target) if expected_target else None
+                ),
+                "expected_hop_for_structural_probe": variant.get("expected_hop"),
             },
         })
 

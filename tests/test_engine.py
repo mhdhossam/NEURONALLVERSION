@@ -104,6 +104,54 @@ class NeuronGraphTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.graph.connect(self.mohamed, self.neuron, "uses", weight=1.5)
 
+    def test_metadata_is_preprocessed_and_refreshable(self):
+        neuron = self.graph.neurons[self.neuron]
+        self.assertIn("memory", neuron.search_tokens)
+        self.assertIn(self.neuron, self.graph._token_index["memory"])
+
+        neuron.content = "stardust-only content"
+        self.graph.refresh_neuron_metadata(self.neuron)
+
+        self.assertNotIn(self.neuron, self.graph._token_index.get("memory", set()))
+        self.assertEqual(self.graph.find_candidates("stardust", top_k=3),
+                         [(self.neuron, 1.0)])
+
+    def test_unvisited_neurons_are_not_reset(self):
+        unrelated = self.graph.add_concept("Unvisited concept")
+        self.graph.neurons[unrelated].activation = 0.37
+
+        self.graph.spread_activation([self.mohamed], max_hops=1, workers=1)
+
+        self.assertEqual(self.graph.neurons[unrelated].activation, 0.37)
+
+    def test_previous_touched_activation_is_cleared_without_global_reset(self):
+        self.graph.spread_activation([self.graph_project], max_hops=0, workers=1)
+        self.assertEqual(self.graph.neurons[self.graph_project].activation, 1.0)
+
+        self.graph.spread_activation([self.mohamed], max_hops=0, workers=1)
+        self.assertEqual(self.graph.neurons[self.graph_project].activation, 0.0)
+        self.assertEqual(self.graph.neurons[self.mohamed].activation, 1.0)
+
+    def test_threaded_frontier_matches_serial_results(self):
+        graph = NeuronGraph()
+        seed_ids = []
+        for index in range(32):
+            source = graph.add_concept(f"source-{index}")
+            target = graph.add_concept(f"target-{index}")
+            graph.connect(source, target, "points_to")
+            seed_ids.append(source)
+
+        serial = graph.spread_activation(seed_ids, max_hops=1, workers=1)
+        threaded = graph.spread_activation(seed_ids, max_hops=1, workers=4)
+        self.assertEqual(serial, threaded)
+
+    def test_explicit_relation_query_ranks_target_first(self):
+        rows = self.graph.search("Neuron uses what?", top_k=3, max_hops=2, workers=1)
+        self.assertGreaterEqual(len(rows), 1)
+        self.assertEqual(rows[0]["neuron_id"], self.graph_project)
+        self.assertEqual(rows[0]["matched_relation"], "uses")
+        self.assertEqual(rows[0]["path"], ["Neuron", "Graph processing"])
+
     def test_unknown_query_returns_no_guess(self):
         self.assertEqual(self.graph.search("nonexistent material", top_k=5), [])
         self.assertIsNone(self.graph.find_path(

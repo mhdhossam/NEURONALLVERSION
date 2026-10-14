@@ -517,7 +517,7 @@ class NeuronGraph:
         seed_scores = dict(seeds)
         for source_id, seed_score in seeds:
             outgoing_by_relation = self._outgoing_by_relation.get(source_id, {})
-            for relation in matching_relations:
+            for relation in sorted(matching_relations):
                 for sid in outgoing_by_relation.get(relation, ()):
                     edge = self.synapses[sid]
                     target = self.neurons[edge.target_id]
@@ -538,8 +538,9 @@ class NeuronGraph:
                         row["score"] = round(direct_score, 6)
                         row["path"] = [self.neurons[source_id].name, target.name]
                         row["hops"] = 1
-                    row["relation_score"] = round(direct_score, 6)
-                    row["matched_relation"] = relation
+                    if direct_score > row.get("relation_score", -1.0):
+                        row["relation_score"] = round(direct_score, 6)
+                        row["matched_relation"] = relation
 
         ranked = sorted(results.values(), key=lambda row: (
             -row["score"], row["hops"], row["name"].casefold(), row["neuron_id"]

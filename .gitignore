@@ -1,3 +1,6 @@
 __pycache__/
 *.py[cod]
 neuron_memory.json
+
+# Generated benchmark result
+benchmark-results.json

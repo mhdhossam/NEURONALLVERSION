@@ -84,6 +84,7 @@ class NeuronGraphTests(unittest.TestCase):
                          [(self.mohamed, 1.0)])
 
     def test_json_round_trip_preserves_relationships_and_evidence(self):
+        self.graph.add_relation_alias("works_on", "project")
         self.graph.add_edge_evidence(
             self.edge_works, positive=True, source="test source", note="confirmed"
         )
@@ -97,6 +98,12 @@ class NeuronGraphTests(unittest.TestCase):
         )[1]["relation"], "uses")
         self.assertEqual(loaded.synapses[self.edge_works].evidence[0].source, "test source")
         self.assertEqual(loaded.knowledge[self.mohamed].relationships["works_on"], [self.neuron])
+        rows = loaded.search(
+            "What project does Mohamed focus on?",
+            top_k=3, max_hops=2, workers=1, record_history=False,
+        )
+        self.assertEqual(rows[0]["neuron_id"], self.neuron)
+        self.assertEqual(rows[0]["matched_relation_alias"], "project")
 
     def test_invalid_ids_and_weights_fail_loudly(self):
         with self.assertRaises(KeyError):
@@ -175,6 +182,21 @@ class NeuronGraphTests(unittest.TestCase):
             for nid, knowledge in self.graph.knowledge.items()
         }
         self.assertEqual(after, before)
+
+    def test_preprocessed_relation_alias_handles_paraphrase(self):
+        graph = NeuronGraph()
+        ada = graph.add_concept("Ada Lovelace", kind="person")
+        answer = graph.add_concept("Computational mathematics", kind="concept")
+        graph.connect(ada, answer, "profession")
+
+        rows = graph.search(
+            "What kind of work does Ada Lovelace do?",
+            top_k=3, max_hops=2, workers=1, record_history=False,
+        )
+        self.assertGreaterEqual(len(rows), 1)
+        self.assertEqual(rows[0]["neuron_id"], answer)
+        self.assertEqual(rows[0]["matched_relation"], "profession")
+        self.assertEqual(rows[0]["matched_relation_alias"], "kind of work")
 
     def test_unknown_query_returns_no_guess(self):
         self.assertEqual(self.graph.search("nonexistent material", top_k=5), [])

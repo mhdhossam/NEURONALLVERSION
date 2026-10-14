@@ -173,7 +173,28 @@ def method_functions(
     fact_targets: dict[str, str],
     top_k: int,
 ):
-    def node_lexical_control(query: str) -> list[str]:
+    def legacy_full_scan_control(query: str) -> list[str]:
+        # Reproduce the former candidate path: rebuild and tokenize each node's text
+        # for every query. This is a performance control, not a second answer engine.
+        query_terms = set(tokens(query))
+        scored = []
+        if not query_terms:
+            return []
+        for nid, neuron in graph.neurons.items():
+            knowledge = graph.knowledge[neuron.knowledge_id]
+            attrs = " ".join(f"{key} {value}" for key, value in knowledge.attributes.items())
+            text = " ".join([
+                neuron.name, neuron.kind, neuron.content, str(neuron.metadata),
+                attrs, knowledge.name,
+            ])
+            node_terms = set(tokens(text))
+            overlap = len(query_terms & node_terms) / len(query_terms) if node_terms else 0.0
+            if overlap > 0:
+                scored.append((nid, overlap))
+        scored.sort(key=lambda item: (-item[1], graph.neurons[item[0]].name.casefold(), item[0]))
+        return [nid for nid, _score in scored[:top_k]]
+
+    def indexed_lexical(query: str) -> list[str]:
         return [nid for nid, _score in graph.find_candidates(query, top_k=top_k)]
 
     def node_vector_control(query: str) -> list[str]:
@@ -211,7 +232,8 @@ def method_functions(
         )]
 
     return {
-        "node_lexical_control": node_lexical_control,
+        "legacy_full_scan_control": legacy_full_scan_control,
+        "neuron_indexed_lexical": indexed_lexical,
         "node_tfidf_control": node_vector_control,
         "fact_lexical": fact_lexical,
         "fact_tfidf_vector": fact_vector,
@@ -287,6 +309,51 @@ def approx_index_bytes(index: SparseTfidfIndex) -> int:
     return size
 
 
+def benchmark_parallel_frontier(width: int = 256, repeats: int = 15) -> dict:
+    """Compare serial and threaded frontier expansion on the same wide graph."""
+    graph = NeuronGraph()
+    seeds = {}
+    for index in range(width):
+        source = graph.add_concept(f"frontier-source-{index:05d}")
+        target = graph.add_concept(f"frontier-target-{index:05d}")
+        graph.connect(source, target, "points_to")
+        seeds[source] = 1.0
+
+    def measure(workers: int) -> dict:
+        fn = lambda: graph.spread_activation(
+            seeds, max_hops=1, max_nodes=width * 3, workers=workers
+        )
+        expected = fn()
+        latencies = []
+        for _ in range(repeats):
+            started = time.perf_counter_ns()
+            actual = fn()
+            latencies.append((time.perf_counter_ns() - started) / 1e6)
+            if len(actual) != len(expected):
+                raise AssertionError("serial/threaded propagation returned different result counts")
+            if [(r.neuron_id, r.score, r.path, r.hops) for r in actual] != [
+                (r.neuron_id, r.score, r.path, r.hops) for r in expected
+            ]:
+                raise AssertionError("serial/threaded propagation results differ")
+        return {
+            "workers": workers,
+            "mean_ms": round(statistics.mean(latencies), 4),
+            "p50_ms": round(percentile(latencies, 0.50), 4),
+            "p95_ms": round(percentile(latencies, 0.95), 4),
+            "result_count": len(expected),
+        }
+
+    return {
+        "active_sources": width,
+        "edges_expanded_per_query": width,
+        "repeats_per_mode": repeats,
+        "serial": measure(1),
+        "threaded": measure(4),
+        "results_equivalent": True,
+        "note": "Pure-Python threading may be slower under the GIL; timings are measured, not assumed.",
+    }
+
+
 def run_benchmark(sizes: list[int], top_k: int = 5) -> dict:
     report = {
         "benchmark": "Neuron v3 relational retrieval microbenchmark",
@@ -294,7 +361,9 @@ def run_benchmark(sizes: list[int], top_k: int = 5) -> dict:
         "python": sys.version.split()[0],
         "top_k": top_k,
         "method_notes": {
-            "node_lexical_control": "Current NeuronGraph.find_candidates over node text only; cannot see relationship statements.",
+            "legacy_full_scan_control": "Former behavior: rebuild and tokenize every node's text on each query.",
+            "neuron_indexed_lexical": "New behavior: preprocessed neuron metadata and token-to-neuron inverted index.",
+            "node_lexical_control": "Legacy key retained for historical report compatibility.",
             "node_tfidf_control": "Sparse TF-IDF cosine over node text only; cannot see relationship statements; not a neural embedding model.",
             "fact_lexical": "Lexical matching over explicit source-relation-target fact text.",
             "fact_tfidf_vector": "Sparse TF-IDF cosine over the same explicit fact text; not a pretrained embedding.",
@@ -303,6 +372,7 @@ def run_benchmark(sizes: list[int], top_k: int = 5) -> dict:
             "graph_path": "Oracle-seeded shortest-path diagnostic; source node ID is supplied, so not an end-to-end text retrieval baseline."
         },
         "sizes": [],
+        "frontier_execution": benchmark_parallel_frontier(),
     }
     for size in sizes:
         (
@@ -350,7 +420,8 @@ def print_report(report: dict) -> None:
     print("Task: query gives a source name + relation; expected target is named only in the relationship fact.")
     print("Node-only controls do not see edges; fact lexical/TF-IDF index source-relation-target text.")
     print("TF-IDF is sparse lexical vectors, not a pretrained semantic embedding.")
-    print("Graph path is separate and receives the correct source ID as an oracle seed.\n")
+    print("Graph path is separate and receives the correct source ID as an oracle seed.")
+    print("Indexed lexical is compared with the former per-query full text scan.\n")
     print("NODES  METHOD                    HIT@1   RECALL@3  MRR     MEAN ms  P95 ms")
     print("-" * 82)
     for size in report["sizes"]:
@@ -371,6 +442,13 @@ def print_report(report: dict) -> None:
         print(f"       approx index memory: node={size['approx_node_tfidf_index_bytes']/1024:.1f} KiB; "
               f"facts={size['approx_fact_tfidf_index_bytes']/1024:.1f} KiB")
         print()
+
+    frontier = report["frontier_execution"]
+    print("FRONTIER PROPAGATION — serial vs threaded")
+    print(f"Active sources={frontier['active_sources']}; edges/query={frontier['edges_expanded_per_query']}")
+    print(f"serial:   mean={frontier['serial']['mean_ms']:.3f} ms; p95={frontier['serial']['p95_ms']:.3f} ms")
+    print(f"threaded: mean={frontier['threaded']['mean_ms']:.3f} ms; p95={frontier['threaded']['p95_ms']:.3f} ms")
+    print(f"results equivalent: {frontier['results_equivalent']} (threading speedup is not assumed)\n")
 
 
 def main() -> None:

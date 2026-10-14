@@ -53,54 +53,50 @@ def percentile(values: list[float], p: float) -> float:
 
 
 class SparseTfidfIndex:
-    """Transparent lexical vector baseline. Not a pretrained embedding model."""
+    """Transparent sparse TF-IDF cosine baseline, not a pretrained embedding."""
 
-    def __init__(self, graph: NeuronGraph):
+    def __init__(self, documents: dict[str, str]):
         self.documents: dict[str, dict[str, float]] = {}
-        document_tokens: dict[str, list[str]] = {}
+        document_tokens = {key: tokens(text) for key, text in documents.items()}
         df: Counter[str] = Counter()
-        for nid, neuron in graph.neurons.items():
-            knowledge = graph.knowledge[neuron.knowledge_id]
-            attribute_text = " ".join(f"{key} {value}" for key, value in knowledge.attributes.items())
-            metadata_text = f"{neuron.metadata}"
-            doc = " ".join([
-                neuron.name, neuron.kind, neuron.content, attribute_text,
-                metadata_text, knowledge.name,
-            ])
-            doc_tokens = tokens(doc)
-            document_tokens[nid] = doc_tokens
+        for doc_tokens in document_tokens.values():
             df.update(set(doc_tokens))
         n_docs = max(1, len(document_tokens))
-        idf = {term: math.log(1 + n_docs / (1 + count)) + 1.0
-               for term, count in df.items()}
-        for nid, doc_tokens in document_tokens.items():
+        self.idf = {
+            term: math.log(1 + n_docs / (1 + count)) + 1.0
+            for term, count in df.items()
+        }
+        for doc_id, doc_tokens in document_tokens.items():
             counts = Counter(doc_tokens)
-            weights = {term: (1.0 + math.log(count)) * idf[term]
-                       for term, count in counts.items()}
+            weights = {
+                term: (1.0 + math.log(count)) * self.idf[term]
+                for term, count in counts.items()
+            }
             norm = math.sqrt(sum(value * value for value in weights.values()))
-            if norm:
-                weights = {term: value / norm for term, value in weights.items()}
-            self.documents[nid] = weights
-        self.idf = idf
+            self.documents[doc_id] = (
+                {term: value / norm for term, value in weights.items()} if norm else {}
+            )
 
     def search(self, query: str, top_k: int = 5) -> list[str]:
         counts = Counter(tokens(query))
-        weights = {term: (1.0 + math.log(count)) * self.idf[term]
-                   for term, count in counts.items() if term in self.idf}
+        weights = {
+            term: (1.0 + math.log(count)) * self.idf[term]
+            for term, count in counts.items() if term in self.idf
+        }
         norm = math.sqrt(sum(value * value for value in weights.values()))
         if not norm:
             return []
         weights = {term: value / norm for term, value in weights.items()}
         scored = []
-        for nid, doc in self.documents.items():
+        for doc_id, doc in self.documents.items():
             score = sum(value * doc.get(term, 0.0) for term, value in weights.items())
             if score > 0.0:
-                scored.append((nid, score))
+                scored.append((doc_id, score))
         scored.sort(key=lambda item: (-item[1], item[0]))
-        return [nid for nid, _ in scored[:top_k]]
+        return [doc_id for doc_id, _ in scored[:top_k]]
 
 
-def make_workload(n_nodes: int) -> tuple[NeuronGraph, SparseTfidfIndex, list[dict], float, float]:
+def make_workload(n_nodes: int):
     if n_nodes < 20 or n_nodes % 2:
         raise ValueError("node count must be an even integer >= 20")
     graph = NeuronGraph()
@@ -119,11 +115,39 @@ def make_workload(n_nodes: int) -> tuple[NeuronGraph, SparseTfidfIndex, list[dic
     for i, (source, target) in enumerate(zip(source_ids, target_ids)):
         graph.connect(source, target, "uses", weight=0.8 + 0.2 * (i % 5) / 4)
     graph_build_seconds = time.perf_counter() - started
-    index_started = time.perf_counter()
-    vector_index = SparseTfidfIndex(graph)
-    vector_build_seconds = time.perf_counter() - index_started
 
-    # Up to 100 fixed, evenly distributed, held-out query cases per size.
+    # Two indexed views over the same graph data. Node-only controls see node
+    # attributes; fair lexical/vector baselines also index source-relation-target
+    # statements so they receive the relationship information available to graph traversal.
+    node_texts = {}
+    for nid, neuron in graph.neurons.items():
+        knowledge = graph.knowledge[neuron.knowledge_id]
+        attrs = " ".join(f"{key} {value}" for key, value in knowledge.attributes.items())
+        node_texts[nid] = " ".join([
+            neuron.name, neuron.kind, neuron.content, str(neuron.metadata), attrs, knowledge.name
+        ])
+
+    fact_texts = {}
+    fact_targets = {}
+    for sid, edge in graph.synapses.items():
+        source = graph.neurons[edge.source_id]
+        target = graph.neurons[edge.target_id]
+        source_knowledge = graph.knowledge[source.knowledge_id]
+        target_knowledge = graph.knowledge[target.knowledge_id]
+        fact_texts[sid] = " ".join([
+            source.name, source.content, edge.relation,
+            target.name, target.content, source_knowledge.name, target_knowledge.name,
+        ])
+        fact_targets[sid] = edge.target_id
+
+    node_index_started = time.perf_counter()
+    node_vector_index = SparseTfidfIndex(node_texts)
+    node_index_build_seconds = time.perf_counter() - node_index_started
+    fact_index_started = time.perf_counter()
+    fact_vector_index = SparseTfidfIndex(fact_texts)
+    fact_index_build_seconds = time.perf_counter() - fact_index_started
+
+    # Up to 100 fixed, evenly distributed cases at each size.
     case_count = min(100, half)
     step = max(1, half // case_count)
     cases = []
@@ -135,15 +159,41 @@ def make_workload(n_nodes: int) -> tuple[NeuronGraph, SparseTfidfIndex, list[dic
             "source_id": source_ids[i],
             "target_id": target_ids[i],
         })
-    return graph, vector_index, cases, graph_build_seconds, vector_build_seconds
+    return (
+        graph, node_vector_index, fact_vector_index, fact_texts, fact_targets, cases,
+        graph_build_seconds, node_index_build_seconds, fact_index_build_seconds,
+    )
 
 
-def method_functions(graph: NeuronGraph, index: SparseTfidfIndex, top_k: int):
-    def lexical(query: str) -> list[str]:
+def method_functions(
+    graph: NeuronGraph,
+    node_index: SparseTfidfIndex,
+    fact_index: SparseTfidfIndex,
+    fact_texts: dict[str, str],
+    fact_targets: dict[str, str],
+    top_k: int,
+):
+    def node_lexical_control(query: str) -> list[str]:
         return [nid for nid, _score in graph.find_candidates(query, top_k=top_k)]
 
-    def vector(query: str) -> list[str]:
-        return index.search(query, top_k=top_k)
+    def node_vector_control(query: str) -> list[str]:
+        return node_index.search(query, top_k=top_k)
+
+    def fact_lexical(query: str) -> list[str]:
+        query_terms = set(tokens(query))
+        scored = []
+        for sid, text in fact_texts.items():
+            terms = set(tokens(text))
+            score = len(query_terms & terms) / max(1, len(query_terms))
+            if score > 0:
+                scored.append((sid, score))
+        scored.sort(key=lambda item: (-item[1], item[0]))
+        return unique_targets([fact_targets[sid] for sid, _score in scored[:max(top_k * 3, top_k)]])
+
+    def fact_vector(query: str) -> list[str]:
+        return unique_targets([
+            fact_targets[sid] for sid in fact_index.search(query, top_k=max(top_k * 3, top_k))
+        ])[:top_k]
 
     def activation_only(query: str) -> list[str]:
         seed = graph.find_candidates(query, top_k=1)
@@ -161,11 +211,23 @@ def method_functions(graph: NeuronGraph, index: SparseTfidfIndex, top_k: int):
         )]
 
     return {
-        "lexical": lexical,
-        "tfidf_vector": vector,
+        "node_lexical_control": node_lexical_control,
+        "node_tfidf_control": node_vector_control,
+        "fact_lexical": fact_lexical,
+        "fact_tfidf_vector": fact_vector,
         "seeded_activation_only": activation_only,
         "neuron_hybrid": hybrid,
     }
+
+
+def unique_targets(target_ids: list[str]) -> list[str]:
+    seen = set()
+    out = []
+    for target_id in target_ids:
+        if target_id not in seen:
+            seen.add(target_id)
+            out.append(target_id)
+    return out
 
 
 def run_method(fn, cases: list[dict], top_k: int) -> dict:
@@ -216,28 +278,42 @@ def transient_peak_bytes(fn, cases: list[dict]) -> int:
     return peak
 
 
+def approx_index_bytes(index: SparseTfidfIndex) -> int:
+    size = sys.getsizeof(index.documents) + sys.getsizeof(index.idf)
+    for document in index.documents.values():
+        size += sys.getsizeof(document)
+        size += sum(sys.getsizeof(term) + sys.getsizeof(value) for term, value in document.items())
+    size += sum(sys.getsizeof(term) + sys.getsizeof(value) for term, value in index.idf.items())
+    return size
+
+
 def run_benchmark(sizes: list[int], top_k: int = 5) -> dict:
     report = {
         "benchmark": "Neuron v3 relational retrieval microbenchmark",
-        "version": 1,
+        "version": 2,
         "python": sys.version.split()[0],
         "top_k": top_k,
         "method_notes": {
-            "lexical": "Actual NeuronGraph.find_candidates token-overlap ranking.",
-            "tfidf_vector": "Sparse TF-IDF cosine over the same node text; not a pretrained semantic embedding.",
-            "seeded_activation_only": "Seeded by the lexical top-1 result, then ranked only by graph activation.",
-            "neuron_hybrid": "Actual NeuronGraph.search: lexical seed candidates plus bounded graph activation and blended scoring.",
-            "graph_path": "Oracle-seeded structural diagnostic; source node ID is supplied, so not an end-to-end text retrieval baseline."
+            "node_lexical_control": "Current NeuronGraph.find_candidates over node text only; cannot see relationship statements.",
+            "node_tfidf_control": "Sparse TF-IDF cosine over node text only; cannot see relationship statements; not a neural embedding model.",
+            "fact_lexical": "Lexical matching over explicit source-relation-target fact text.",
+            "fact_tfidf_vector": "Sparse TF-IDF cosine over the same explicit fact text; not a pretrained embedding.",
+            "seeded_activation_only": "Lexical top-1 source seed, then rank by propagated graph activation.",
+            "neuron_hybrid": "Actual NeuronGraph.search: node-text candidates plus bounded graph activation and blended scores.",
+            "graph_path": "Oracle-seeded shortest-path diagnostic; source node ID is supplied, so not an end-to-end text retrieval baseline."
         },
         "sizes": [],
     }
     for size in sizes:
-        graph, index, cases, graph_build_seconds, vector_build_seconds = make_workload(size)
-        methods = method_functions(graph, index, top_k)
+        (
+            graph, node_index, fact_index, fact_texts, fact_targets, cases,
+            graph_build_seconds, node_build_seconds, fact_build_seconds,
+        ) = make_workload(size)
+        methods = method_functions(graph, node_index, fact_index, fact_texts, fact_targets, top_k)
         method_results = {}
         for name, fn in methods.items():
             result = run_method(fn, cases, top_k)
-            result["transient_peak_bytes"] = transient_peak_bytes(fn, cases)
+            result["query_batch_peak_allocation_bytes"] = transient_peak_bytes(fn, cases)
             method_results[name] = result
 
         path_latencies = []
@@ -249,25 +325,15 @@ def run_benchmark(sizes: list[int], top_k: int = 5) -> dict:
             if path and path[-1]["target_id"] == case["target_id"]:
                 path_hits += 1
 
-        # Estimate retained size of sparse TF-IDF vectors only. Python object
-        # accounting is approximate and intentionally labelled accordingly.
-        approx_vector_index_bytes = sys.getsizeof(index.documents) + sys.getsizeof(index.idf)
-        for document in index.documents.values():
-            approx_vector_index_bytes += sys.getsizeof(document)
-            approx_vector_index_bytes += sum(
-                sys.getsizeof(term) + sys.getsizeof(value) for term, value in document.items()
-            )
-        approx_vector_index_bytes += sum(
-            sys.getsizeof(term) + sys.getsizeof(value) for term, value in index.idf.items()
-        )
-
         report["sizes"].append({
             "nodes": size,
             "edges": len(graph.synapses),
             "queries": len(cases),
             "graph_build_seconds": round(graph_build_seconds, 6),
-            "tfidf_index_build_seconds": round(vector_build_seconds, 6),
-            "approx_tfidf_index_bytes": approx_vector_index_bytes,
+            "node_tfidf_index_build_seconds": round(node_build_seconds, 6),
+            "fact_tfidf_index_build_seconds": round(fact_build_seconds, 6),
+            "approx_node_tfidf_index_bytes": approx_index_bytes(node_index),
+            "approx_fact_tfidf_index_bytes": approx_index_bytes(fact_index),
             "methods": method_results,
             "structural_diagnostic": {
                 "description": "Shortest path with the correct source ID already known.",
@@ -280,12 +346,13 @@ def run_benchmark(sizes: list[int], top_k: int = 5) -> dict:
 
 
 def print_report(report: dict) -> None:
-    print("\nNEURON V3 BENCHMARK — relational retrieval")
-    print("Task: query gives a source name + relation; answer is a linked target whose text omits the source name.")
-    print("TF-IDF is a sparse lexical-vector baseline, NOT a neural embedding model.")
-    print("Graph path is reported separately because it receives the source ID as an oracle seed.\n")
+    print("\nNEURON V3 BENCHMARK — relational retrieval (fair fact-index comparison)")
+    print("Task: query gives a source name + relation; expected target is named only in the relationship fact.")
+    print("Node-only controls do not see edges; fact lexical/TF-IDF index source-relation-target text.")
+    print("TF-IDF is sparse lexical vectors, not a pretrained semantic embedding.")
+    print("Graph path is separate and receives the correct source ID as an oracle seed.\n")
     print("NODES  METHOD                    HIT@1   RECALL@3  MRR     MEAN ms  P95 ms")
-    print("-" * 78)
+    print("-" * 82)
     for size in report["sizes"]:
         for name, result in size["methods"].items():
             print(f"{size['nodes']:>5}  {name:<25} "
@@ -298,9 +365,11 @@ def print_report(report: dict) -> None:
         print(f"       {'graph_path (oracle seed)':<25} "
               f"{diag['path_success_rate']:>5.1%}   {'n/a':>7}  {'n/a':>5}  "
               f"{diag['mean_ms_per_path']:>7.3f}  {diag['p95_ms_per_path']:>6.3f}")
-        print(f"       build={size['graph_build_seconds']:.3f}s; "
-              f"TF-IDF index={size['tfidf_index_build_seconds']:.3f}s; "
-              f"approx TF-IDF index memory={size['approx_tfidf_index_bytes']/1024:.1f} KiB")
+        print(f"       graph build={size['graph_build_seconds']:.3f}s; "
+              f"node TF-IDF index={size['node_tfidf_index_build_seconds']:.3f}s; "
+              f"fact TF-IDF index={size['fact_tfidf_index_build_seconds']:.3f}s")
+        print(f"       approx index memory: node={size['approx_node_tfidf_index_bytes']/1024:.1f} KiB; "
+              f"facts={size['approx_fact_tfidf_index_bytes']/1024:.1f} KiB")
         print()
 
 

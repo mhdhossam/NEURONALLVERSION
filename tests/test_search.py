@@ -109,3 +109,51 @@ class NeuronSearchTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FakeResponse:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def read(self, limit=-1):
+        return self.payload[:limit]
+
+
+class SearchProviderAdapterTests(unittest.TestCase):
+    def test_duckduckgo_html_parsing_works_without_network(self):
+        from unittest.mock import patch
+        from neuron_core.search import DuckDuckGoHTMLProvider
+
+        html = b"""
+        <html><body>
+          <a class="result__a" href="https://example.org/one">First <b>Source</b></a>
+          <a class="result__snippet" href="https://example.org/one">A useful <b>snippet</b>.</a>
+          <a class="result__a" href="https://example.org/two">Second Source</a>
+          <a class="result__snippet" href="https://example.org/two">Another snippet.</a>
+        </body></html>
+        """
+        with patch("neuron_core.search.urlopen", return_value=FakeResponse(html)):
+            results = DuckDuckGoHTMLProvider().search("test query", limit=2)
+
+        self.assertEqual([item.title for item in results], ["First Source", "Second Source"])
+        self.assertIn("useful snippet", results[0].snippet)
+        self.assertEqual(results[1].url, "https://example.org/two")
+
+    def test_wikipedia_json_mapping_works_without_network(self):
+        from unittest.mock import patch
+        from neuron_core.search import WikipediaSearchProvider
+
+        payload = b'{"pages":[{"title":"Earth","key":"Earth","description":"Our planet","excerpt":"Planetary details"}]}'
+        with patch("neuron_core.search.urlopen", return_value=FakeResponse(payload)):
+            results = WikipediaSearchProvider().search("Earth", limit=1)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].title, "Earth")
+        self.assertEqual(results[0].url, "https://en.wikipedia.org/wiki/Earth")
+        self.assertEqual(results[0].snippet, "Our planet")

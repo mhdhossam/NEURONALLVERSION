@@ -94,3 +94,47 @@ python benchmarks/benchmark_context_variation.py --json-output context-processin
 ```
 
 This probe compares several wordings over identical facts, including ambiguous wording, explicit residence/workplace/birthplace cues, a multi-hop chain, and contradictory evidence. It records whether relation interpretations and the active node set change. It is a behavioral diagnostic—not a literal simulation of human neurobiology.
+
+
+## Decision verification
+
+A decision policy can pass its proposed subject, typed relation, target, and the
+processing trace to the read-only verifier. The verifier checks that the relation
+is unambiguous in the trace, the edge and optional direct path exist, the trace
+supports a unique target, and recorded evidence meets the configured threshold.
+
+```python
+from neuron_core import NeuronGraph, trace_processing, verify_decision
+
+brain = NeuronGraph()
+person = brain.add_concept("Mira", kind="person")
+workplace = brain.add_concept("Orion Lab", kind="organization")
+edge = brain.connect(person, workplace, "works_at")
+brain.add_relation_alias("works_at", "work")
+brain.add_edge_evidence(edge, positive=True, source="trusted-registry")
+
+query = "Where does Mira work?"
+trace = trace_processing(brain, query)
+proposal = {
+    "source_id": person,
+    "relation": "works_at",
+    "target_id": workplace,
+    "path": [person, workplace],
+}
+result = verify_decision(
+    brain, trace, proposal,
+    trusted_sources={"trusted-registry"},
+)
+if result["accepted"]:
+    print("Decision passed graph and evidence verification")
+else:
+    print(result["status"], result["reasons"])
+```
+
+Statuses are `verified`, `ambiguous`, or `rejected`. Supply an explicit
+`trusted_sources` allowlist for evidence labels that the application has vetted.
+Without such an allowlist, non-empty evidence labels count as recorded support
+but are not independently authenticated. The verifier currently handles direct
+single-edge answers; it does not prove external truth or validate multi-hop
+reasoning paths. Missing evidence, contradictory evidence, competing targets, or
+unclear relation interpretations prevent automatic acceptance.

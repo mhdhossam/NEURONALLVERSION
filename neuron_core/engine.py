@@ -17,6 +17,19 @@ from uuid import uuid4
 
 SCHEMA_VERSION = 1
 
+# Small, explicit vocabulary used to map common query wording to typed graph edges.
+# These phrases are pre-indexed; they are not inferred by a neural model at query time.
+DEFAULT_RELATION_ALIASES: dict[str, tuple[str, ...]] = {
+    "profession": ("occupation", "job", "career", "kind of work"),
+    "specialty": ("expertise", "subject", "area of expertise", "skilled in"),
+    "research_field": ("research area", "area", "study", "studies", "field of research"),
+    "home_city": ("home town", "hometown", "live", "lives", "reside", "residence"),
+    "primary_tool": ("tool", "main tool", "mainly use", "usually use"),
+    "affiliation": ("organization", "connected with", "associated with", "member of"),
+    "discipline": ("subject", "academic discipline", "field of study"),
+    "invention": ("create", "created", "make", "made", "build", "built"),
+}
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -137,7 +150,8 @@ class NeuronGraph:
         self._outgoing_by_relation: dict[str, dict[str, list[str]]] = {}
         self._token_index: dict[str, set[str]] = {}
         self._relation_token_index: dict[str, set[str]] = {}
-        self._relation_tokens: dict[str, set[str]] = {}
+        self._relation_phrases: dict[str, dict[frozenset[str], str]] = {}
+        self._custom_relation_aliases: dict[str, set[str]] = {}
         self._active_neuron_ids: set[str] = set()
         self._activation_lock = Lock()
 
@@ -207,6 +221,40 @@ class NeuronGraph:
             # _index_neuron also removes the old postings when present.
             self._index_neuron(neuron_id)
 
+    def _index_relation(self, relation: str) -> None:
+        """Preprocess canonical relation wording and aliases into a token index."""
+        old_phrases = self._relation_phrases.get(relation, {})
+        for phrase_tokens in old_phrases:
+            for token in phrase_tokens:
+                posting = self._relation_token_index.get(token)
+                if posting is not None:
+                    posting.discard(relation)
+                    if not posting:
+                        del self._relation_token_index[token]
+
+        aliases = set(DEFAULT_RELATION_ALIASES.get(relation, ()))
+        aliases.update(self._custom_relation_aliases.get(relation, set()))
+        aliases.add(relation.replace("_", " "))
+        phrases: dict[frozenset[str], str] = {}
+        for alias in aliases:
+            phrase_tokens = frozenset(_tokens(alias))
+            if phrase_tokens:
+                phrases[phrase_tokens] = alias
+        self._relation_phrases[relation] = phrases
+        for phrase_tokens in phrases:
+            for token in phrase_tokens:
+                self._relation_token_index.setdefault(token, set()).add(relation)
+
+    def add_relation_alias(self, relation: str, alias: str) -> None:
+        """Register a domain-specific phrase for a relationship and index it immediately."""
+        if not relation or not relation.strip():
+            raise ValueError("relation must not be empty")
+        if not alias or not alias.strip() or not _tokens(alias):
+            raise ValueError("alias must contain at least one searchable token")
+        relation = relation.strip()
+        self._custom_relation_aliases.setdefault(relation, set()).add(alias.strip())
+        self._index_relation(relation)
+
     def add_region(self, name: str, *, domain: str = "general",
                    region_id: Optional[str] = None) -> str:
         if not name or not name.strip():
@@ -239,10 +287,7 @@ class NeuronGraph:
         self.synapses[sid] = edge
         self._outgoing[source_id].append(sid)
         self._outgoing_by_relation[source_id].setdefault(edge.relation, []).append(sid)
-        relation_tokens = _tokens(edge.relation.replace("_", " "))
-        self._relation_tokens[edge.relation] = relation_tokens
-        for token in relation_tokens:
-            self._relation_token_index.setdefault(token, set()).add(edge.relation)
+        self._index_relation(edge.relation)
         source = self.neurons[source_id]
         target = self.neurons[target_id]
         source_knowledge = self.knowledge[source.knowledge_id]
@@ -295,7 +340,8 @@ class NeuronGraph:
     def spread_activation(self, seeds: Mapping[str, float] | Iterable[str], *,
                           max_hops: int = 3, damping: float = 0.75,
                           min_activation: float = 0.01, max_nodes: int = 500,
-                          workers: int = 1) -> list[ActivationResult]:
+                          workers: int = 1, commit_snapshot: bool = True
+                          ) -> list[ActivationResult]:
         """Propagate over the active frontier only.
 
         Expansion is parallelized in chunks when a frontier has enough edges.
@@ -385,18 +431,20 @@ class NeuronGraph:
                 if not frontier or len(scores) >= max_nodes:
                     break
 
-        # Avoid an O(total-neurons) reset. Clear only the prior touched set, then
-        # publish this query's snapshot. Query result values above remain local.
-        with self._activation_lock:
-            for nid in self._active_neuron_ids:
-                neuron = self.neurons.get(nid)
-                if neuron is not None:
-                    neuron.activation = 0.0
-                    neuron.last_active_step = 0
-            self._active_neuron_ids = set(scores)
-            for nid, score in scores.items():
-                self.neurons[nid].activation = min(1.0, score)
-                self.neurons[nid].last_active_step = hops_used[nid]
+        # Context-specific exploration can request query-local propagation without
+        # overwriting the public activation snapshot that represents the base pass.
+        if commit_snapshot:
+            # Avoid an O(total-neurons) reset. Clear only the prior touched set.
+            with self._activation_lock:
+                for nid in self._active_neuron_ids:
+                    neuron = self.neurons.get(nid)
+                    if neuron is not None:
+                        neuron.activation = 0.0
+                        neuron.last_active_step = 0
+                self._active_neuron_ids = set(scores)
+                for nid, score in scores.items():
+                    self.neurons[nid].activation = min(1.0, score)
+                    self.neurons[nid].last_active_step = hops_used[nid]
 
         results = [
             ActivationResult(nid, score, paths[nid], hops_used[nid])
@@ -470,7 +518,7 @@ class NeuronGraph:
 
     def search(self, query: str, *, top_k: int = 5, max_hops: int = 2,
                damping: float = 0.75, region_id: Optional[str] = None,
-               workers: int = 1) -> list[dict[str, Any]]:
+               workers: int = 1, record_history: bool = True) -> list[dict[str, Any]]:
         """Search preprocessed candidates, propagate activation, and favor explicit relation answers.
 
         Query seeding remains lexical rather than semantic language understanding.
@@ -509,20 +557,33 @@ class NeuronGraph:
         relation_candidates: set[str] = set()
         for token in query_terms:
             relation_candidates.update(self._relation_token_index.get(token, ()))
-        matching_relations = {
-            relation for relation in relation_candidates
-            if self._relation_tokens.get(relation)
-            and self._relation_tokens[relation].issubset(query_terms)
-        }
+        matching_relations: dict[str, tuple[frozenset[str], str]] = {}
+        for relation in relation_candidates:
+            phrases = self._relation_phrases.get(relation, {})
+            matched = [
+                (phrase_tokens, alias)
+                for phrase_tokens, alias in phrases.items()
+                if phrase_tokens.issubset(query_terms)
+            ]
+            if matched:
+                matching_relations[relation] = max(
+                    matched, key=lambda item: (len(item[0]), item[1].casefold())
+                )
+
         seed_scores = dict(seeds)
         for source_id, seed_score in seeds:
             outgoing_by_relation = self._outgoing_by_relation.get(source_id, {})
             for relation in sorted(matching_relations):
+                matched_phrase, matched_alias = matching_relations[relation]
                 for sid in outgoing_by_relation.get(relation, ()):
                     edge = self.synapses[sid]
                     target = self.neurons[edge.target_id]
                     ko = self.knowledge[target.knowledge_id]
-                    direct_score = min(1.0, 0.6 + 0.4 * min(1.0, seed_score * edge.weight))
+                    specificity_bonus = min(0.08, 0.02 * max(0, len(matched_phrase) - 1))
+                    direct_score = min(
+                        1.0,
+                        0.6 + 0.4 * min(1.0, seed_score * edge.weight) + specificity_bonus,
+                    )
                     row = results.get(target.id)
                     if row is None:
                         row = {
@@ -541,14 +602,16 @@ class NeuronGraph:
                     if direct_score > row.get("relation_score", -1.0):
                         row["relation_score"] = round(direct_score, 6)
                         row["matched_relation"] = relation
+                        row["matched_relation_alias"] = matched_alias
 
         ranked = sorted(results.values(), key=lambda row: (
             -row["score"], row["hops"], row["name"].casefold(), row["neuron_id"]
         ))
-        for row in ranked[:top_k]:
-            self.knowledge[row["knowledge_id"]].observe(
-                "retrieved", query=query, score=row["score"], path=row["path"]
-            )
+        if record_history:
+            for row in ranked[:top_k]:
+                self.knowledge[row["knowledge_id"]].observe(
+                    "retrieved", query=query, score=row["score"], path=row["path"]
+                )
         return ranked[:top_k]
 
     def get_relationships(self, neuron_id: str) -> list[dict[str, Any]]:
@@ -579,6 +642,10 @@ class NeuronGraph:
             "knowledge": [asdict(item) for item in self.knowledge.values()],
             "synapses": [asdict(item) for item in self.synapses.values()],
             "regions": [asdict(item) for item in self.regions.values()],
+            "relation_aliases": {
+                relation: sorted(aliases)
+                for relation, aliases in self._custom_relation_aliases.items()
+            },
         }
 
     def save(self, path: str | Path) -> None:
@@ -605,6 +672,10 @@ class NeuronGraph:
         if payload.get("schema_version") != SCHEMA_VERSION:
             raise ValueError(f"unsupported schema_version {payload.get('schema_version')!r}")
         graph = cls()
+        graph._custom_relation_aliases = {
+            str(relation): set(aliases)
+            for relation, aliases in payload.get("relation_aliases", {}).items()
+        }
         for raw in payload.get("knowledge", []):
             item = dict(raw)
             graph.knowledge[item["id"]] = KnowledgeObject(**item)
@@ -623,10 +694,7 @@ class NeuronGraph:
             graph.synapses[edge.id] = edge
             graph._outgoing[edge.source_id].append(edge.id)
             graph._outgoing_by_relation[edge.source_id].setdefault(edge.relation, []).append(edge.id)
-            relation_tokens = _tokens(edge.relation.replace("_", " "))
-            graph._relation_tokens[edge.relation] = relation_tokens
-            for token in relation_tokens:
-                graph._relation_token_index.setdefault(token, set()).add(edge.relation)
+            graph._index_relation(edge.relation)
         for raw in payload.get("regions", []):
             item = dict(raw)
             graph.regions[item["id"]] = Region(**item)

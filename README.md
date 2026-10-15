@@ -16,6 +16,7 @@ The research notebooks contain several competing versions of Neuron, Region, and
 - **Preprocessing:** searchable neuron text and tokens are prepared when a neuron is created and stored with its metadata.
 - **Candidate index:** an in-memory token-to-neuron inverted index retrieves candidates from matching postings instead of rebuilding and scanning every neuron's text on each query.
 - **Relationship index:** typed outgoing edges are bucketed by relation, allowing relation-directed lookup without scanning all synapses.
+- **Relation aliases:** common query phrases (for example, `kind of work` → `profession`) are preprocessed into the relation index. Register project/domain-specific aliases with `add_relation_alias(relation, alias)`; aliases are explicit rules, not open-ended semantic understanding.
 - **Activation:** bounded, query-local propagation with a hop limit, damping, activation floor, and node cap. Only nodes touched in the prior/current activation snapshot are updated; there is no full-network reset.
 - **Parallel frontier:** propagation can process sufficiently large edge frontiers in chunks using threads when explicitly requested (`workers=4`). The default is serial (`workers=1`) because the benchmark showed Python threads slower for the tested CPU-bound frontier. Small frontiers stay serial to avoid scheduling overhead. Since pure-Python CPU work is constrained by the CPython GIL, threading is a correctness/concurrency feature whose speed benefit must be measured, not assumed.
 - **Retrieval:** indexed lexical candidates followed by graph-assisted retrieval; explicit relation matches can prioritize the connected target and return an inspectable path.
@@ -63,3 +64,33 @@ This is an engineering milestone, not a claim of human-like understanding. It do
 ## Next research milestone
 
 Benchmark equivalent methods on the same fixed dataset: lexical retrieval, vector-only retrieval, graph-only traversal from known seeds, and hybrid vector-seeded graph retrieval. Report accuracy/recall, path relevance, latency, memory use, and unknown rejection. Do not compare insertion timings if one method builds links and another does not.
+
+
+## Processing trace (before a decision policy)
+
+The `trace_processing` helper exposes intermediate graph-processing state without choosing a final answer:
+
+```python
+from neuron_core import NeuronGraph, trace_processing
+
+brain = NeuronGraph()
+person = brain.add_concept("Jordan Lee", kind="person")
+city = brain.add_concept("Cairo", kind="city")
+brain.connect(person, city, "lives_in")
+brain.add_relation_alias("lives_in", "live")
+
+trace = trace_processing(brain, "Where does Jordan Lee live?")
+print(trace["lexical_seeds"])
+print(trace["relation_hypotheses"])
+print(trace["activation_by_hop"])
+```
+
+The trace includes lexical seeds, matched relation phrases, generic activation grouped by hop count, paths, and evidence values on traversed or relation-matched edges. For explicitly matched relations, it also preserves separate context-conditioned exploration branches per matching source edge; alternatives remain separate and no branch is selected as the answer. Branch propagation uses `commit_snapshot=False`, so it does not overwrite the public activation snapshot. The base trace pass updates that snapshot but does not append retrieval events to knowledge history. The `profession` aliases intentionally avoid the generic one-word alias `work`, which was ambiguous with workplace relationships.
+
+Run the context-variation probe:
+
+```bash
+python benchmarks/benchmark_context_variation.py --json-output context-processing-results.json
+```
+
+This probe compares several wordings over identical facts, including ambiguous wording, explicit residence/workplace/birthplace cues, a multi-hop chain, and contradictory evidence. It records whether relation interpretations and the active node set change. It is a behavioral diagnostic—not a literal simulation of human neurobiology.

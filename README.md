@@ -94,7 +94,7 @@ for path in trace["paths"]:
 Run the focused tests and path-exploration benchmark:
 
 ```bash
-python -m unittest tests.test_reasoning -v
+python -m unittest discover -s tests -p "test_reasoning.py" -v
 python benchmarks/benchmark_reasoning_experiment.py
 ```
 

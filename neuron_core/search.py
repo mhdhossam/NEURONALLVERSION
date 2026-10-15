@@ -326,25 +326,34 @@ def think_with_search(
     query_node_id = None
     source_node_ids: list[str] = []
     if results:
+        # Build metadata lookup maps once. Searching each URL by rescanning every
+        # neuron would turn a small result page into O(results * graph_size) work.
+        query_nodes: dict[str, str] = {}
+        source_nodes: dict[str, str] = {}
         for neuron_id, neuron in graph.neurons.items():
-            if neuron.kind == "search_query" and neuron.metadata.get("search_query_key") == query.casefold().strip():
-                query_node_id = neuron_id
-                break
+            if neuron.kind == "search_query":
+                key = neuron.metadata.get("search_query_key")
+                if isinstance(key, str):
+                    query_nodes[key] = neuron_id
+            elif neuron.kind == "external_source":
+                url = neuron.metadata.get("url")
+                if isinstance(url, str):
+                    source_nodes[url] = neuron_id
+
+        query_key = query.casefold().strip()
+        query_node_id = query_nodes.get(query_key)
         if query_node_id is None:
             query_node_id = graph.add_concept(
                 f"Search query: {query.strip()}",
                 kind="search_query",
                 content=query.strip(),
-                metadata={"search_query_key": query.casefold().strip(), "query": query.strip()},
+                metadata={"search_query_key": query_key, "query": query.strip()},
             )
 
         for result in results:
-            if not result.url.startswith(("http://", "https://")):
+            if urlparse(result.url).scheme not in {"http", "https"}:
                 continue
-            source_id = next((
-                neuron_id for neuron_id, neuron in graph.neurons.items()
-                if neuron.kind == "external_source" and neuron.metadata.get("url") == result.url
-            ), None)
+            source_id = source_nodes.get(result.url)
             if source_id is None:
                 source_id = graph.add_concept(
                     result.title or result.url,
@@ -356,13 +365,29 @@ def think_with_search(
                         "provider": result.provider,
                         "search_queries": [query.strip()],
                         "source_kind": "external_search_result",
+                        "last_retrieved_at": time.time(),
                     },
                 )
+                source_nodes[result.url] = source_id
             else:
                 neuron = graph.neurons[source_id]
+                knowledge = graph.knowledge[neuron.knowledge_id]
+                changed = False
+                if result.title and neuron.name != result.title:
+                    neuron.name = result.title
+                    knowledge.name = result.title
+                    changed = True
+                snippet = result.snippet[:snippet_char_limit]
+                if snippet and neuron.content != snippet:
+                    neuron.content = snippet
+                    changed = True
+                neuron.metadata["provider"] = result.provider
+                neuron.metadata["last_retrieved_at"] = time.time()
                 searches = neuron.metadata.setdefault("search_queries", [])
                 if query.strip() not in searches:
                     searches.append(query.strip())
+                    changed = True
+                if changed:
                     graph.refresh_neuron_metadata(source_id)
             source_node_ids.append(source_id)
             existing_edge = any(

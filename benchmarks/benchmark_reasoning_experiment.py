@@ -8,8 +8,13 @@ claim. Run from the repository root:
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import statistics
+import sys
 import time
+
+# Direct script execution sets sys.path[0] to benchmarks/, not the repository root.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from neuron_core import NeuronGraph, explore_reasoning
 

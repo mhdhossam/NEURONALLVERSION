@@ -6,7 +6,7 @@ network requests, and keep retrieval/exploration bounded.
 """
 from __future__ import annotations
 
-from contextlib import closing
+from contextlib import closing, contextmanager
 from dataclasses import asdict, dataclass
 from html.parser import HTMLParser
 import json
@@ -254,6 +254,16 @@ class SQLiteCachedSearchProvider:
         )
         return connection
 
+    @contextmanager
+    def _transaction(self):
+        with closing(self._connect()) as db:
+            try:
+                yield db
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+
     def search(self, query: str, *, limit: int = 5) -> list[SearchResult]:
         _validate_search(query, limit)
         normal = " ".join(query.casefold().split())
@@ -261,8 +271,7 @@ class SQLiteCachedSearchProvider:
             f"{self.provider.cache_key}\0{normal}\0{limit}".encode("utf-8")
         ).hexdigest()
         now = time.time()
-        with closing(self._connect()) as db:
-            db.execute("BEGIN")
+        with self._transaction() as db:
             row = db.execute(
                 "SELECT created_at, payload FROM search_cache WHERE cache_id = ?",
                 (cache_id,),

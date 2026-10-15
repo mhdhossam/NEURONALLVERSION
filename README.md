@@ -103,3 +103,58 @@ The benchmark tests known-path discovery as unrelated graph content grows; it is
 ## Deliberate limits
 
 This is an engineering experiment, not a claim of human-like understanding. Query seeding is lexical; relations must be represented in the graph, and aliases are configured rules. Graph reachability does not by itself prove a fact, resolve ambiguity, infer unrestricted natural-language meaning, or select truth from contradictory evidence. The goal of this experiment is to make relational exploration bounded, inspectable, and measurable.
+
+
+## Low-cost search as an input to exploration
+
+The experimental `think_with_search` flow uses the graph first, then searches only when no local lexical candidate exists (or when `force_search=True`). Search is not an LLM call: providers are pluggable, and both supplied providers use public endpoints without an API key. Public endpoints can still throttle requests or change their response format.
+
+- `DuckDuckGoHTMLProvider`: broad web search, subject to provider availability and rate limits.
+- `WikipediaSearchProvider`: focused encyclopedia search through the Wikimedia REST API.
+- `FallbackSearchProvider`: tries providers in order.
+- `SQLiteCachedSearchProvider`: caches search titles/snippets by normalized query with a TTL and entry cap to avoid repeat requests.
+
+```python
+from neuron_core import (
+    NeuronGraph,
+    DuckDuckGoHTMLProvider,
+    WikipediaSearchProvider,
+    FallbackSearchProvider,
+    SQLiteCachedSearchProvider,
+    think_with_search,
+)
+
+brain = NeuronGraph()
+provider = SQLiteCachedSearchProvider(
+    FallbackSearchProvider(
+        DuckDuckGoHTMLProvider(),
+        WikipediaSearchProvider(),
+    ),
+    path=".neuron_cache/search.sqlite3",
+    ttl_seconds=24 * 60 * 60,
+    max_entries=5000,
+)
+
+state = think_with_search(
+    brain,
+    "How does quantum entanglement affect information?",
+    provider,
+    result_limit=5,
+    max_hops=2,
+)
+print(state["search_triggered"])
+print(state["search_results"])
+print(state["processing_trace"]["activation_by_hop"])
+# Persist graph knowledge and sourced observations:
+brain.save("memory.json")
+```
+
+Search results are stored as `external_source` nodes with their URLs, provider and snippets, connected to a query node using `found_by_search`. Repeated URLs are reused instead of duplicating graph nodes. SQLite caching persists only compact result metadata/snippets; the graph can be persisted separately. No full article scraping or paid model usage is performed by default.
+
+**Trust boundary:** search results are external observations, not established truths. The function does not automatically extract claims from prose or promote search hits into positive/negative factual evidence. This prevents a matching result from silently becoming a verified fact. The returned trace explores current graph context but does not decide an answer.
+
+The automated search tests use a deterministic stub provider; CI does not depend on live network access. Run:
+
+```bash
+python -m unittest discover -s tests -p "test_search.py" -v
+```

@@ -7,6 +7,7 @@ the graph, or claim that graph-local evidence proves external real-world truth.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+import math
 from typing import Any
 
 from .engine import NeuronGraph
@@ -24,6 +25,9 @@ def verify_decision(
     *,
     min_support: float = 1.0,
     trusted_sources: Iterable[str] | None = None,
+    trusted_interpreters: Iterable[str] | None = None,
+    min_relation_confidence: float = 0.75,
+    min_relation_margin: float = 0.10,
 ) -> dict[str, Any]:
     """Verify a proposed single-edge answer without making a new decision.
 
@@ -41,18 +45,32 @@ def verify_decision(
     the source is present in the trace, the exact graph edge exists, and enough
     explicit positive evidence exists without recorded contradiction.
 
-    If trusted_sources is provided, only evidence records whose source label is
-    in that allowlist count toward support or contradiction. If omitted, all
-    non-empty source labels count as recorded evidence, but are not independently
-    authenticated by this function.
+    A trace may include relation_resolution from an external semantic interpreter.
+    Such a resolution can disambiguate multiple candidate relations only when it is
+    marked resolved, names the proposed relation, meets the configured confidence
+    and top-two margin thresholds, and (when supplied) uses an allowed interpreter
+    label. Without a resolution, the original conservative unique-alias rule applies.
+
+    If trusted_sources is provided, only evidence records whose source label is in
+    that allowlist count toward support or contradiction. If trusted_interpreters is
+    provided, only resolution labels in that allowlist may resolve relation ambiguity.
+    These allowlists check labels; they do not cryptographically authenticate sources
+    or interpreter implementations.
 
     Returns a structured verified, ambiguous, or rejected result. The function
     is read-only with respect to the graph and trace.
     """
-    if min_support <= 0:
-        raise ValueError("min_support must be greater than zero")
+    if not math.isfinite(float(min_support)) or min_support <= 0:
+        raise ValueError("min_support must be finite and greater than zero")
+    if not math.isfinite(float(min_relation_confidence)) or not 0.0 <= min_relation_confidence <= 1.0:
+        raise ValueError("min_relation_confidence must be between 0 and 1")
+    if not math.isfinite(float(min_relation_margin)) or not 0.0 <= min_relation_margin <= 1.0:
+        raise ValueError("min_relation_margin must be between 0 and 1")
 
     trusted = None if trusted_sources is None else set(trusted_sources)
+    trusted_interpreter_set = (
+        None if trusted_interpreters is None else set(trusted_interpreters)
+    )
     checks: dict[str, dict[str, str]] = {}
     reasons: list[str] = []
     evidence_rows: list[dict[str, Any]] = []
@@ -156,7 +174,72 @@ def verify_decision(
             "The proposed subject is not present in the trace's lexical seeds or relation edges.",
         )
 
-    if not hypothesis_relations:
+    resolution = trace.get("relation_resolution")
+    if resolution is not None:
+        if not isinstance(resolution, Mapping):
+            add_check(
+                "relation_interpretation", _UNRESOLVED,
+                "The relation resolution is malformed; relation meaning remains unverified.",
+            )
+        else:
+            resolution_status = resolution.get("status")
+            resolved_relation = resolution.get("relation")
+            interpreter = resolution.get("source")
+            confidence = resolution.get("confidence")
+            margin = resolution.get("margin")
+            if resolution_status != "resolved":
+                add_check(
+                    "relation_interpretation", _UNRESOLVED,
+                    f"The relation interpreter returned {resolution_status!r}; no relation was accepted.",
+                )
+            elif not isinstance(interpreter, str) or not interpreter.strip():
+                add_check(
+                    "relation_interpretation", _UNRESOLVED,
+                    "The resolved relation has no interpreter provenance label.",
+                )
+            elif trusted_interpreter_set is not None and interpreter not in trusted_interpreter_set:
+                add_check(
+                    "relation_interpretation", _UNRESOLVED,
+                    f"Relation interpreter {interpreter!r} is not in the trusted interpreter allowlist.",
+                )
+            elif (
+                isinstance(confidence, bool)
+                or not isinstance(confidence, (int, float))
+                or not math.isfinite(float(confidence))
+                or not 0.0 <= float(confidence) <= 1.0
+                or isinstance(margin, bool)
+                or not isinstance(margin, (int, float))
+                or not math.isfinite(float(margin))
+                or not 0.0 <= float(margin) <= 1.0
+            ):
+                add_check(
+                    "relation_interpretation", _UNRESOLVED,
+                    "Resolved relations require finite confidence and top-two margin values between 0 and 1.",
+                )
+            elif resolved_relation != relation:
+                add_check(
+                    "relation_interpretation", _FAIL,
+                    f"The resolver selected {resolved_relation!r}, but the proposal uses {relation!r}.",
+                )
+            elif relation not in hypothesis_relations:
+                add_check(
+                    "relation_interpretation", _FAIL,
+                    "The resolver's relation is absent from the trace's relation hypotheses.",
+                )
+            elif float(confidence) < min_relation_confidence or float(margin) < min_relation_margin:
+                add_check(
+                    "relation_interpretation", _UNRESOLVED,
+                    f"Relation resolution is below threshold (confidence={float(confidence):.3f}, "
+                    f"margin={float(margin):.3f}; required confidence>={min_relation_confidence:.3f}, "
+                    f"margin>={min_relation_margin:.3f}).",
+                )
+            else:
+                add_check(
+                    "relation_interpretation", _PASS,
+                    f"{interpreter} resolved relation {relation!r} "
+                    f"(confidence={float(confidence):.3f}, margin={float(margin):.3f}).",
+                )
+    elif not hypothesis_relations:
         add_check(
             "relation_interpretation", _UNRESOLVED,
             "The trace contains no explicit relation hypothesis; relation meaning is unverified.",

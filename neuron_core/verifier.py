@@ -193,6 +193,35 @@ def verify_decision(
         f"Found {len(matching_edges)} matching direct graph edge(s).",
     )
 
+    # Confirm that the same source-relation-target triple appears in the trace.
+    # A direct graph edge alone is not enough if it was not part of this query's
+    # interpreted/activated evidence snapshot.
+    trace_relation_targets = {
+        edge.get("target_id")
+        for hypothesis in hypotheses
+        if isinstance(hypothesis, Mapping) and hypothesis.get("relation") == relation
+        for edge in (hypothesis.get("seed_edges") or [])
+        if isinstance(edge, Mapping) and edge.get("source_id") == source_id
+    } if isinstance(hypotheses, list) else set()
+
+    if target_id not in trace_relation_targets:
+        add_check(
+            "target_in_trace", _UNRESOLVED,
+            "The proposed target is not present in the trace's edges for this source and relation; "
+            "refresh the trace or gather more evidence.",
+        )
+    elif len(trace_relation_targets) > 1:
+        add_check(
+            "target_in_trace", _UNRESOLVED,
+            "Multiple targets are connected to this subject by the proposed relation; "
+            "the verifier cannot establish a unique answer.",
+        )
+    else:
+        add_check(
+            "target_in_trace", _PASS,
+            "The trace supports a unique target for this subject and relation.",
+        )
+
     # If supplied, validate the proposed path rather than accepting an opaque path.
     path = proposal.get("path")
     if path is not None:

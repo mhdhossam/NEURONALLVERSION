@@ -44,6 +44,10 @@ from neuron_core import NeuronGraph, trace_processing, verify_decision  # noqa: 
 from neuron_core.engine import DEFAULT_RELATION_ALIASES, _tokens  # noqa: E402
 
 MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+SEMANTIC_INTERPRETER_ID = f"{MODEL_NAME}:relation-prototypes"
+RELATION_SCORE_TEMPERATURE = 0.08
+VERIFIER_MIN_RELATION_CONFIDENCE = 0.75
+VERIFIER_MIN_RELATION_MARGIN = 0.10
 RELATIONS = [
     "profession", "specialty", "research_field", "home_city",
     "primary_tool", "affiliation", "discipline", "invention",
@@ -153,6 +157,16 @@ def rank_metrics(ranks: list[int | None], latencies_ms: list[float], top_k: int)
         "mean_ms": round(statistics.mean(latencies_ms), 4) if latencies_ms else None,
         "p95_ms": round(percentile(latencies_ms, 0.95), 4) if latencies_ms else None,
     }
+
+
+def normalized_relation_scores(similarities: np.ndarray, temperature: float = RELATION_SCORE_TEMPERATURE) -> np.ndarray:
+    """Normalize prototype similarities for ranking/abstention; not calibrated probabilities."""
+    if temperature <= 0:
+        raise ValueError("temperature must be greater than zero")
+    logits = np.asarray(similarities, dtype=np.float64) / temperature
+    logits = logits - np.max(logits, axis=1, keepdims=True)
+    weights = np.exp(logits)
+    return weights / np.sum(weights, axis=1, keepdims=True)
 
 
 def build_world(n_facts: int, all_relations_per_person: bool) -> dict:
@@ -355,6 +369,7 @@ def evaluate_world(label: str, world: dict, model, top_k: int) -> dict:
             show_progress_bar=False, batch_size=64,
         ).astype(np.float32)
         similarities = q_masked @ prototype_vectors.T
+        normalized_scores = normalized_relation_scores(similarities)
         predicted_relations = [RELATIONS[int(i)] for i in similarities.argmax(axis=1)]
         top2_relation_ids = np.argsort(similarities, axis=1)[:, -2:]
         relation_top2 = [
@@ -431,12 +446,48 @@ def evaluate_world(label: str, world: dict, model, top_k: int) -> dict:
                     target_id = edge.target_id
             matcher_latency_sample.append((time.perf_counter_ns() - t0) / 1e6)
             matcher_ranks.append(1 if target_id == expected_target_id else None)
+            ranked_relation_ids = np.argsort(similarities[i])[::-1]
+            best_relation_index = int(ranked_relation_ids[0])
+            second_relation_index = int(ranked_relation_ids[1])
+            best_confidence = float(normalized_scores[i, best_relation_index])
+            second_confidence = float(normalized_scores[i, second_relation_index])
+            relation_margin = max(0.0, best_confidence - second_confidence)
+            semantic_resolution_status = (
+                "resolved"
+                if (
+                    best_confidence >= VERIFIER_MIN_RELATION_CONFIDENCE
+                    and relation_margin >= VERIFIER_MIN_RELATION_MARGIN
+                )
+                else "ambiguous"
+            )
+            relation_candidates = [
+                {
+                    "relation": RELATIONS[int(relation_index)],
+                    "source": SEMANTIC_INTERPRETER_ID,
+                    "score": float(similarities[i, int(relation_index)]),
+                    "confidence": float(normalized_scores[i, int(relation_index)]),
+                }
+                for relation_index in ranked_relation_ids[:2]
+            ]
+            relation_resolution = {
+                "status": semantic_resolution_status,
+                "relation": predicted_relations[i],
+                "source": SEMANTIC_INTERPRETER_ID,
+                "confidence": best_confidence,
+                "margin": relation_margin,
+                "score": float(similarities[i, best_relation_index]),
+                "runner_up": RELATIONS[second_relation_index],
+                "confidence_kind": "temperature-normalized prototype similarity; not calibrated",
+            }
             verifier_inputs.append({
                 "case": case,
                 "source_id": chosen_source,
                 "relation": predicted_relations[i],
                 "target_id": target_id,
                 "expected_target_id": expected_target_id,
+                "alias_matches": sorted(matched),
+                "relation_candidates": relation_candidates,
+                "relation_resolution": relation_resolution,
             })
 
             # BM25 and TF-IDF rank exactly the same fact documents.
@@ -535,7 +586,9 @@ def evaluate_world(label: str, world: dict, model, top_k: int) -> dict:
         )
 
     verifier_trusted_sources = {"synthetic-benchmark-ground-truth"}
-    for mode, rows in verifier_inputs_by_mode.items():
+    verifier_trusted_interpreters = {SEMANTIC_INTERPRETER_ID, "neuron-alias-rules"}
+
+    def run_verifier_pipeline(rows: list[dict], *, integrated: bool) -> dict:
         status_counts: Counter[str] = Counter()
         verifier_latencies_ms: list[float] = []
         valid_proposals = 0
@@ -543,34 +596,67 @@ def evaluate_world(label: str, world: dict, model, top_k: int) -> dict:
         incorrect_proposals = 0
         accepted_correct = 0
         accepted_incorrect = 0
+
         for row in rows:
             source_id = row["source_id"]
+            case = row["case"]
+            relation = row["relation"]
             target_id = row["target_id"]
+            resolution = None
+            candidates = None
+
+            if integrated and source_id is not None:
+                # Explicit rules take precedence when they resolve exactly one relation.
+                # Semantic prototypes are a fallback, not a reason to override a clear
+                # relation alias. If rules are missing or collide, use the semantic
+                # resolver and let its confidence/margin policy decide whether to abstain.
+                aliases = row["alias_matches"]
+                if len(aliases) == 1:
+                    relation = aliases[0]
+                    resolution = {
+                        "status": "resolved",
+                        "relation": relation,
+                        "source": "neuron-alias-rules",
+                        "confidence": 1.0,
+                        "margin": 1.0,
+                        "confidence_kind": "exact configured alias match",
+                    }
+                else:
+                    relation = row["relation"]
+                    resolution = row["relation_resolution"]
+                candidates = row["relation_candidates"]
+                relation_edges = graph._outgoing_by_relation.get(source_id, {}).get(relation, ())
+                target_id = graph.synapses[relation_edges[0]].target_id if relation_edges else None
+
             if source_id is None or target_id is None:
                 status_counts["no_proposal"] += 1
                 continue
 
-            case = row["case"]
-            trace = trace_processing(
-                graph,
-                case["query"],
-                seed_limit=10,
-                max_hops=0,
-                max_context_branches=1,
-            )
+            trace_options = {
+                "seed_limit": 10,
+                "max_hops": 0,
+                "max_context_branches": 1,
+            }
+            if integrated:
+                trace_options["relation_interpretations"] = candidates or []
+                trace_options["relation_resolution"] = resolution
+            trace = trace_processing(graph, case["query"], **trace_options)
             proposal = {
                 "source_id": source_id,
-                "relation": row["relation"],
+                "relation": relation,
                 "target_id": target_id,
                 "path": [source_id, target_id],
             }
+
             started = time.perf_counter_ns()
-            verdict = verify_decision(
-                graph,
-                trace,
-                proposal,
-                trusted_sources=verifier_trusted_sources,
-            )
+            verify_options = {"trusted_sources": verifier_trusted_sources}
+            if integrated:
+                verify_options.update({
+                    "trusted_interpreters": verifier_trusted_interpreters,
+                    "min_relation_confidence": VERIFIER_MIN_RELATION_CONFIDENCE,
+                    "min_relation_margin": VERIFIER_MIN_RELATION_MARGIN,
+                })
+            verdict = verify_decision(graph, trace, proposal, **verify_options)
             verifier_latencies_ms.append((time.perf_counter_ns() - started) / 1e6)
             status_counts[verdict["status"]] += 1
             valid_proposals += 1
@@ -585,7 +671,7 @@ def evaluate_world(label: str, world: dict, model, top_k: int) -> dict:
                     accepted_incorrect += 1
 
         accepted_count = status_counts["verified"]
-        result["modes"][mode]["stage_4_decision_verification"] = {
+        return {
             "proposal_count": valid_proposals,
             "no_proposal_count": status_counts["no_proposal"],
             "status_counts": {
@@ -616,6 +702,20 @@ def evaluate_world(label: str, world: dict, model, top_k: int) -> dict:
                 "synthetic benchmark ground truth, added after baseline measurements; "
                 "not an external factual-verification claim"
             ),
+        }
+
+    for mode, rows in verifier_inputs_by_mode.items():
+        result["modes"][mode]["stage_4_decision_verification"] = {
+            "alias_only_raw_semantic_proposal": run_verifier_pipeline(rows, integrated=False),
+            "rules_first_semantic_fallback": run_verifier_pipeline(rows, integrated=True),
+            "semantic_fallback_policy": {
+                "interpreter": SEMANTIC_INTERPRETER_ID,
+                "score_temperature": RELATION_SCORE_TEMPERATURE,
+                "minimum_normalized_score": VERIFIER_MIN_RELATION_CONFIDENCE,
+                "minimum_top_two_margin": VERIFIER_MIN_RELATION_MARGIN,
+                "score_is_calibrated_probability": False,
+                "rule_priority": "a single explicit alias relation wins; semantic fallback is used when aliases are missing or ambiguous",
+            },
         }
 
     # The single-fact-per-person setting can be solved by reading the person's only
@@ -677,7 +777,9 @@ def main() -> None:
             "BM25 and TF-IDF rank the same fact documents; they are retrieval baselines, not reasoning engines.",
             "Oracle-relation graph scores are an upper bound with the correct relation supplied, not an independently deployable method.",
             "Latency is measured on this CPU runner; semantic matcher end-to-end latency uses a sampled single-query encode, while metrics use batched embeddings.",
-            "Stage 4 reruns decision proposals through verify_decision after baseline measurements and uses explicitly labeled synthetic ground-truth edge evidence.",
+            "Stage 4 compares the original alias-only verifier against a rules-first pipeline that attaches ranked semantic relation hypotheses and uses a confidence/margin abstention policy.",
+            "Prototype softmax scores are normalized similarity scores, not calibrated probabilities; benchmark thresholds are diagnostic heuristics.",
+            "Verifier edge evidence is explicitly labeled synthetic ground truth added after baseline measurements; it is not an external factual-verification claim.",
             "This is a synthetic retrieval diagnostic, not a general language understanding or LLM comparison.",
         ],
         "s1_one_fact_per_person": [],

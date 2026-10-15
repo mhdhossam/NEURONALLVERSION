@@ -86,6 +86,123 @@ class DecisionVerifierTests(unittest.TestCase):
         self.assertEqual(result["status"], "ambiguous")
         self.assertEqual(result["checks"]["target_in_trace"]["status"], "unresolved")
 
+    def _semantic_trace(self, resolution=None):
+        # This question deliberately uses wording that does not match the registered
+        # "work" alias. The external interpreter contributes both candidate relations.
+        city = self.graph.add_concept("Cairo", kind="city")
+        self.graph.connect(self.mira, city, "lives_in")
+        trace = trace_processing(
+            self.graph,
+            "Which company employs Mira?",
+            relation_interpretations=[
+                {
+                    "relation": "works_at",
+                    "source": "semantic-test",
+                    "score": 0.72,
+                    "confidence": 0.91,
+                },
+                {
+                    "relation": "lives_in",
+                    "source": "semantic-test",
+                    "score": 0.48,
+                    "confidence": 0.08,
+                },
+            ],
+            relation_resolution=resolution or {
+                "status": "resolved",
+                "relation": "works_at",
+                "source": "semantic-test",
+                "confidence": 0.91,
+                "margin": 0.42,
+            },
+        )
+        return trace
+
+    def test_semantic_resolution_can_disambiguate_multiple_trace_hypotheses(self):
+        self.graph.add_edge_evidence(
+            self.edge, positive=True, source="trusted-db", note="record exists"
+        )
+        trace = self._semantic_trace()
+        result = verify_decision(
+            self.graph,
+            trace,
+            self.proposal,
+            trusted_sources={"trusted-db"},
+            trusted_interpreters={"semantic-test"},
+        )
+        self.assertEqual(result["status"], "verified")
+        self.assertEqual(result["checks"]["relation_interpretation"]["status"], "pass")
+        self.assertEqual(
+            {row["relation"] for row in trace["relation_hypotheses"]},
+            {"works_at", "lives_in"},
+        )
+
+    def test_semantic_resolution_below_threshold_remains_ambiguous(self):
+        self.graph.add_edge_evidence(
+            self.edge, positive=True, source="trusted-db", note="record exists"
+        )
+        trace = self._semantic_trace({
+            "status": "resolved",
+            "relation": "works_at",
+            "source": "semantic-test",
+            "confidence": 0.62,
+            "margin": 0.04,
+        })
+        result = verify_decision(
+            self.graph,
+            trace,
+            self.proposal,
+            trusted_sources={"trusted-db"},
+            trusted_interpreters={"semantic-test"},
+        )
+        self.assertEqual(result["status"], "ambiguous")
+        self.assertEqual(result["checks"]["relation_interpretation"]["status"], "unresolved")
+
+    def test_untrusted_semantic_interpreter_cannot_resolve_ambiguity(self):
+        self.graph.add_edge_evidence(
+            self.edge, positive=True, source="trusted-db", note="record exists"
+        )
+        result = verify_decision(
+            self.graph,
+            self._semantic_trace(),
+            self.proposal,
+            trusted_sources={"trusted-db"},
+            trusted_interpreters={"approved-interpreter"},
+        )
+        self.assertEqual(result["status"], "ambiguous")
+        self.assertEqual(result["checks"]["relation_interpretation"]["status"], "unresolved")
+
+    def test_semantic_resolution_conflicting_with_proposal_is_rejected(self):
+        self.graph.add_edge_evidence(
+            self.edge, positive=True, source="trusted-db", note="record exists"
+        )
+        trace = self._semantic_trace({
+            "status": "resolved",
+            "relation": "lives_in",
+            "source": "semantic-test",
+            "confidence": 0.91,
+            "margin": 0.42,
+        })
+        result = verify_decision(
+            self.graph,
+            trace,
+            self.proposal,
+            trusted_sources={"trusted-db"},
+            trusted_interpreters={"semantic-test"},
+        )
+        self.assertEqual(result["status"], "rejected")
+        self.assertEqual(result["checks"]["relation_interpretation"]["status"], "fail")
+
+    def test_external_relation_interpretation_requires_known_graph_relation(self):
+        with self.assertRaises(ValueError):
+            trace_processing(
+                self.graph,
+                "Which company employs Mira?",
+                relation_interpretations=[
+                    {"relation": "unknown_relation", "source": "semantic-test"}
+                ],
+            )
+
     def test_invalid_path_is_rejected(self):
         proposal = {**self.proposal, "path": [self.mira, self.orion, self.mira]}
         result = verify_decision(self.graph, self.trace, proposal)

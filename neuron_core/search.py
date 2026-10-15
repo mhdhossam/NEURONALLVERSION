@@ -282,8 +282,7 @@ class SQLiteCachedSearchProvider:
             db.execute("DELETE FROM search_cache WHERE created_at < ?", (now - self.ttl_seconds,))
         results = self.provider.search(query, limit=limit)
         payload = json.dumps([asdict(item) for item in results], ensure_ascii=False)
-        with closing(self._connect()) as db:
-            db.execute("BEGIN")
+        with self._transaction() as db:
             db.execute(
                 "INSERT OR REPLACE INTO search_cache(cache_id, created_at, payload) VALUES (?, ?, ?)",
                 (cache_id, now, payload),

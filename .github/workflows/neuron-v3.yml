@@ -70,6 +70,7 @@ jobs:
           name: neuron-adversarial-reasoning-results
           path: adversarial-reasoning-results.json
           if-no-files-found: error
+
   context-processing-trace:
     runs-on: ubuntu-latest
     steps:
@@ -85,4 +86,22 @@ jobs:
         with:
           name: neuron-context-processing-results
           path: context-processing-results.json
+          if-no-files-found: error
+
+  reasoning-experiment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run isolated reasoning unit tests
+        run: python -m unittest discover -s tests -p "test_reasoning.py" -v
+      - name: Measure bounded path exploration as unrelated nodes scale
+        run: python benchmarks/benchmark_reasoning_experiment.py > neuron-reasoning-results.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: neuron-reasoning-experiment-results
+          path: neuron-reasoning-results.json
           if-no-files-found: error

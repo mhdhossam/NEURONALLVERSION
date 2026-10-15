@@ -3,11 +3,9 @@
 Neuron v3 is a dependency-free, graph-first knowledge and activation core based on the strongest ideas in the research notebooks: stable knowledge identity, typed regions, relationship graphs, bounded activation, evidence-based confidence, and explainable retrieval paths. The existing notebooks remain untouched as research history.
 
 ## Why this core exists
-
 The research notebooks contain several competing versions of Neuron, Region, and Platform. Some components are also incompatible with one another. This package provides one consistent foundation instead of continuing to grow the notebook maze.
 
 ## Architecture
-
 - **Neuron:** an addressable memory/activation unit with one canonical identifier and a pointer to its knowledge object.
 - **KnowledgeObject:** stable concept or identity with attributes, typed relationships, and observation history.
 - **Synapse:** directed, typed relationship. Configured weight expresses relevance; confidence comes from explicit positive and contradictory evidence.
@@ -17,8 +15,7 @@ The research notebooks contain several competing versions of Neuron, Region, and
 - **Candidate index:** an in-memory token-to-neuron inverted index retrieves candidates from matching postings instead of rebuilding and scanning every neuron's text on each query.
 - **Relationship index:** typed outgoing edges are bucketed by relation, allowing relation-directed lookup without scanning all synapses.
 - **Relation aliases:** common query phrases (for example, `kind of work` → `profession`) are preprocessed into the relation index. Register project/domain-specific aliases with `add_relation_alias(relation, alias)`; aliases are explicit rules, not open-ended semantic understanding.
-- **Activation:** bounded, query-local propagation with a hop limit, damping, activation floor, and node cap. Only nodes touched in the prior/current activation snapshot are updated; there is no full-network reset.
-- **Parallel frontier:** propagation can process sufficiently large edge frontiers in chunks using threads when explicitly requested (`workers=4`). The default is serial (`workers=1`) because the benchmark showed Python threads slower for the tested CPU-bound frontier. Small frontiers stay serial to avoid scheduling overhead. Since pure-Python CPU work is constrained by the CPython GIL, threading is a correctness/concurrency feature whose speed benefit must be measured, not assumed.
+- **Parallel frontier:** propagation can process sufficiently large edge frontiers in chunks using threads when explicitly requested (`workers=4`). The default is serial (`workers=1`) because the benchmark showed Python threads slower for the tested CPU-bound frontier.
 - **Retrieval:** indexed lexical candidates followed by graph-assisted retrieval; explicit relation matches can prioritize the connected target and return an inspectable path.
 - **Metadata refresh:** call `refresh_neuron_metadata(neuron_id)` after editing a neuron's content/metadata or its knowledge attributes directly. Call `rebuild_search_index()` after bulk edits.
 - **Feedback:** confidence changes only when explicit evidence or feedback is recorded, not merely because an item wins retrieval.
@@ -37,16 +34,11 @@ brain.add_edge_evidence(edge, positive=True, source="verified statement")
 
 print(brain.find_path(person, project))
 print(brain.search("Mohamed", max_hops=2))
-# Opt into threaded frontier expansion for experiments:
 print(brain.search("Mohamed", max_hops=2, workers=4))
 brain.save("memory.json")
-
-# If source knowledge changes after creation, refresh its prepared metadata.
-brain.neurons[person].content = "backend engineer"
-brain.refresh_neuron_metadata(person)
 ```
 
-A longer demo is available in examples/demo.py.
+A longer demo is available in `examples/demo.py`.
 
 ## Run tests
 
@@ -56,15 +48,6 @@ Requires Python 3.10+; no third-party packages are required for the core.
 python -m unittest discover -s tests -v
 python examples/demo.py
 ```
-
-## Deliberate limits
-
-This is an engineering milestone, not a claim of human-like understanding. It does not train neural weights, infer truth from correlation, or parse unrestricted natural language. Query seeding is token overlap; graph links need to be supplied or learned from validated feedback. The optional threaded path may not improve CPU-bound Python workloads because of interpreter overhead/GIL contention. The aim is to make the structural hypothesis testable and behavior inspectable.
-
-## Next research milestone
-
-Benchmark equivalent methods on the same fixed dataset: lexical retrieval, vector-only retrieval, graph-only traversal from known seeds, and hybrid vector-seeded graph retrieval. Report accuracy/recall, path relevance, latency, memory use, and unknown rejection. Do not compare insertion timings if one method builds links and another does not.
-
 
 ## Processing trace (before a decision policy)
 
@@ -85,12 +68,93 @@ print(trace["relation_hypotheses"])
 print(trace["activation_by_hop"])
 ```
 
-The trace includes lexical seeds, matched relation phrases, generic activation grouped by hop count, paths, and evidence values on traversed or relation-matched edges. For explicitly matched relations, it also preserves separate context-conditioned exploration branches per matching source edge; alternatives remain separate and no branch is selected as the answer. Branch propagation uses `commit_snapshot=False`, so it does not overwrite the public activation snapshot. The base trace pass updates that snapshot but does not append retrieval events to knowledge history. The `profession` aliases intentionally avoid the generic one-word alias `work`, which was ambiguous with workplace relationships.
+The trace includes lexical seeds, matched relation phrases, generic activation grouped by hop count, paths, and evidence values on traversed or relation-matched edges. For explicitly matched relations, it preserves separate context-conditioned exploration branches; alternatives remain separate and no branch is selected as the answer.
 
-Run the context-variation probe:
+## v4 reasoning experiment (isolated branch)
 
-```bash
-python benchmarks/benchmark_context_variation.py --json-output context-processing-results.json
+The experimental `explore_reasoning` function enumerates bounded graph paths from lexical query seeds. It keeps separate routes to the same endpoint, includes each edge's support and contradiction evidence, prevents cycles within a path, and reports when its path budget is exhausted. It returns `decision: None`: this is deliberately an exploration primitive, not a policy that chooses a final answer.
+
+```python
+from neuron_core import NeuronGraph, explore_reasoning
+
+brain = NeuronGraph()
+person = brain.add_concept("Mira", kind="person")
+company = brain.add_concept("Orion Lab", kind="organization")
+city = brain.add_concept("Cairo", kind="city")
+language = brain.add_concept("Rust", kind="programming_language")
+brain.connect(person, company, "works_at")
+brain.connect(company, city, "located_in")
+brain.connect(city, language, "uses")
+
+trace = explore_reasoning(brain, "Mira", max_hops=3)
+for path in trace["paths"]:
+    print(path["nodes"], path["relations"], path["exploration_strength"])
 ```
 
-This probe compares several wordings over identical facts, including ambiguous wording, explicit residence/workplace/birthplace cues, a multi-hop chain, and contradictory evidence. It records whether relation interpretations and the active node set change. It is a behavioral diagnostic—not a literal simulation of human neurobiology.
+Run the focused tests and path-exploration benchmark:
+
+```bash
+python -m unittest discover -s tests -p "test_reasoning.py" -v
+python benchmarks/benchmark_reasoning_experiment.py
+```
+
+The benchmark tests known-path discovery as unrelated graph content grows; it is not proof of open-ended natural-language reasoning. This work lives on `neuron-v4-reasoning-experiment` so it can be evaluated without changing `neuron-v3-core` or the current retrieval policy.
+
+## Deliberate limits
+
+This is an engineering experiment, not a claim of human-like understanding. Query seeding is lexical; relations must be represented in the graph, and aliases are configured rules. Graph reachability does not by itself prove a fact, resolve ambiguity, infer unrestricted natural-language meaning, or select truth from contradictory evidence. The goal of this experiment is to make relational exploration bounded, inspectable, and measurable.
+
+
+## Low-cost search as an input to exploration
+
+The experimental `think_with_search` flow uses the graph first, then searches only when no local lexical candidate exists (or when `force_search=True`). Search is not an LLM call: providers are pluggable, and both supplied providers use public endpoints without an API key. Public endpoints can still throttle requests or change their response format.
+
+- `DuckDuckGoHTMLProvider`: broad web search, subject to provider availability and rate limits.
+- `WikipediaSearchProvider`: focused encyclopedia search through the Wikimedia REST API.
+- `FallbackSearchProvider`: tries providers in order.
+- `SQLiteCachedSearchProvider`: caches search titles/snippets by normalized query with a TTL and entry cap to avoid repeat requests.
+
+```python
+from neuron_core import (
+    NeuronGraph,
+    DuckDuckGoHTMLProvider,
+    WikipediaSearchProvider,
+    FallbackSearchProvider,
+    SQLiteCachedSearchProvider,
+    think_with_search,
+)
+
+brain = NeuronGraph()
+provider = SQLiteCachedSearchProvider(
+    FallbackSearchProvider(
+        DuckDuckGoHTMLProvider(),
+        WikipediaSearchProvider(),
+    ),
+    path=".neuron_cache/search.sqlite3",
+    ttl_seconds=24 * 60 * 60,
+    max_entries=5000,
+)
+
+state = think_with_search(
+    brain,
+    "How does quantum entanglement affect information?",
+    provider,
+    result_limit=5,
+    max_hops=2,
+)
+print(state["search_triggered"])
+print(state["search_results"])
+print(state["processing_trace"]["activation_by_hop"])
+# Persist graph knowledge and sourced observations:
+brain.save("memory.json")
+```
+
+Search results are stored as `external_source` nodes with their URLs, provider and snippets, connected to a query node using `found_by_search`. Repeated URLs are reused instead of duplicating graph nodes. SQLite caching persists only compact result metadata/snippets; the graph can be persisted separately. No full article scraping or paid model usage is performed by default.
+
+**Trust boundary:** search results are external observations, not established truths. The function does not automatically extract claims from prose or promote search hits into positive/negative factual evidence. This prevents a matching result from silently becoming a verified fact. The returned trace explores current graph context but does not decide an answer.
+
+The automated search tests use a deterministic stub provider; CI does not depend on live network access. Run:
+
+```bash
+python -m unittest discover -s tests -p "test_search.py" -v
+```

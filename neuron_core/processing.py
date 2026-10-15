@@ -7,6 +7,8 @@ own interpretation or decision policy.
 """
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
+import math
 from typing import Any
 
 from .engine import NeuronGraph, _tokens
@@ -22,13 +24,18 @@ def trace_processing(
     max_nodes: int = 500,
     workers: int = 1,
     max_context_branches: int = 100,
+    relation_interpretations: Iterable[Mapping[str, Any]] | None = None,
+    relation_resolution: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return observable query-processing state without selecting an answer.
 
     The trace contains lexical seeds, activated concepts grouped by hop count,
     relationship-phrase interpretations and evidence-bearing edges. It is a
     deterministic inspection surface over the current engine, not a biological
-    brain simulator and not a decision-maker.
+    brain simulator and not a decision-maker. Optional relation_interpretations let
+    an external semantic parser add ranked hypotheses without adding an ML dependency
+    to the core. relation_resolution records that parser's resolved/ambiguous outcome;
+    the verifier must still apply its configured confidence and provenance policy.
     """
     if seed_limit < 1:
         raise ValueError("seed_limit must be >= 1")
@@ -90,6 +97,87 @@ def trace_processing(
             "matched_aliases": [alias for _, alias in matches],
             "seed_edges": edge_options,
         })
+
+    # Merge external semantic candidates into the same trace contract used by
+    # rule-based relation aliases. This keeps retrieval/evidence inspection unified
+    # while making the interpretation source explicit.
+    hypotheses_by_relation = {item["relation"]: item for item in relation_hypotheses}
+    graph_relations = {edge.relation for edge in graph.synapses.values()}
+    for interpretation in relation_interpretations or ():
+        if not isinstance(interpretation, Mapping):
+            raise ValueError("each relation interpretation must be a mapping")
+        relation = interpretation.get("relation")
+        if not isinstance(relation, str) or not relation.strip():
+            raise ValueError("relation interpretation requires a non-empty relation")
+        relation = relation.strip()
+        if relation not in graph_relations:
+            raise ValueError(f"relation interpretation references unknown graph relation: {relation}")
+        source = interpretation.get("source", "external-interpreter")
+        if not isinstance(source, str) or not source.strip():
+            raise ValueError("relation interpretation source must be a non-empty string")
+
+        record: dict[str, Any] = {"source": source.strip()}
+        score = interpretation.get("score")
+        if score is not None:
+            if isinstance(score, bool) or not isinstance(score, (int, float)) or not math.isfinite(float(score)):
+                raise ValueError("relation interpretation score must be a finite number")
+            record["score"] = float(score)
+        confidence = interpretation.get("confidence")
+        if confidence is not None:
+            if (
+                isinstance(confidence, bool)
+                or not isinstance(confidence, (int, float))
+                or not math.isfinite(float(confidence))
+                or not 0.0 <= float(confidence) <= 1.0
+            ):
+                raise ValueError("relation interpretation confidence must be between 0 and 1")
+            record["confidence"] = float(confidence)
+
+        hypothesis = hypotheses_by_relation.get(relation)
+        if hypothesis is None:
+            edge_options = []
+            for source_id in sorted(seed_ids):
+                for synapse_id in graph._outgoing_by_relation.get(source_id, {}).get(relation, ()):
+                    edge = graph.synapses[synapse_id]
+                    source_neuron = graph.neurons[edge.source_id]
+                    target_neuron = graph.neurons[edge.target_id]
+                    edge_options.append({
+                        "synapse_id": edge.id,
+                        "source_id": source_neuron.id,
+                        "source": graph.knowledge[source_neuron.knowledge_id].name,
+                        "target_id": target_neuron.id,
+                        "target": graph.knowledge[target_neuron.knowledge_id].name,
+                        "weight": edge.weight,
+                        "support": edge.support,
+                        "contradiction": edge.contradiction,
+                        "confidence": edge.confidence,
+                        "effective_strength": edge.effective_strength,
+                    })
+            hypothesis = {
+                "relation": relation,
+                "matched_aliases": [],
+                "seed_edges": edge_options,
+                "interpretation_sources": [],
+            }
+            hypotheses_by_relation[relation] = hypothesis
+            relation_hypotheses.append(hypothesis)
+        hypothesis.setdefault("interpretation_sources", []).append(record)
+
+    relation_hypotheses.sort(key=lambda item: item["relation"])
+
+    normalized_relation_resolution = None
+    if relation_resolution is not None:
+        if not isinstance(relation_resolution, Mapping):
+            raise ValueError("relation_resolution must be a mapping")
+        resolution_status = relation_resolution.get("status")
+        if resolution_status not in {"resolved", "ambiguous", "unresolved"}:
+            raise ValueError("relation_resolution status must be resolved, ambiguous, or unresolved")
+        resolved_relation = relation_resolution.get("relation")
+        if resolution_status == "resolved" and (
+            not isinstance(resolved_relation, str) or not resolved_relation.strip()
+        ):
+            raise ValueError("a resolved relation_resolution requires a non-empty relation")
+        normalized_relation_resolution = dict(relation_resolution)
 
     # Each explicitly matched relation gets its own exploratory branch.
     # These branches preserve alternatives; they do not sort or select a winner.
@@ -230,6 +318,7 @@ def trace_processing(
             for neuron_id, score in seeds
         ],
         "relation_hypotheses": relation_hypotheses,
+        "relation_resolution": normalized_relation_resolution,
         "activation_by_hop": active_by_hop,
         "context_branches": context_branches,
         "context_branches_truncated": branches_truncated,

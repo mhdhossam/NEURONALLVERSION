@@ -75,6 +75,17 @@ class DecisionVerifierTests(unittest.TestCase):
         self.assertEqual(result["status"], "rejected")
         self.assertEqual(result["checks"]["relation_interpretation"]["status"], "fail")
 
+    def test_multiple_targets_for_same_relation_are_ambiguous(self):
+        second_target = self.graph.add_concept("Second Workplace", kind="organization")
+        self.graph.connect(self.mira, second_target, "works_at")
+        self.trace = trace_processing(self.graph, self.query)
+        self.graph.add_edge_evidence(self.edge, positive=True, source="trusted-db")
+        result = verify_decision(
+            self.graph, self.trace, self.proposal, trusted_sources={"trusted-db"}
+        )
+        self.assertEqual(result["status"], "ambiguous")
+        self.assertEqual(result["checks"]["target_in_trace"]["status"], "unresolved")
+
     def test_invalid_path_is_rejected(self):
         proposal = {**self.proposal, "path": [self.mira, self.orion, self.mira]}
         result = verify_decision(self.graph, self.trace, proposal)

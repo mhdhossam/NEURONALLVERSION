@@ -104,7 +104,10 @@ def main():
 
     test_graph, cases = build_world()
     baseline = evaluate(test_graph, cases)
-    reconstructed = evaluate(test_graph, cases, ReconstructedNeuron(test_graph))
+    reconstructed_policy = ReconstructedNeuron(test_graph)
+    # Transfer learned policy weights only; never copy training-world graph state.
+    reconstructed_policy.load_state_dict(learner.state_dict())
+    reconstructed = evaluate(test_graph, cases, reconstructed_policy)
     report = {
         "benchmark": "neuron_v4_feedback_reconstructed_activation_and_paths",
         "training": {

@@ -121,3 +121,19 @@ jobs:
           name: neuron-v4-meaning-understanding-results
           path: neuron-meaning-results.json
           if-no-files-found: error
+
+  genetic-learning:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run first-attempt genetic-learning benchmark
+        run: python benchmarks/benchmark_genetic_learning.py --top-k 5 --json-output neuron-genetic-learning.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: neuron-v4-genetic-learning-results
+          path: neuron-genetic-learning.json
+          if-no-files-found: error

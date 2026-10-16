@@ -1,0 +1,71 @@
+name: Neuron v4 RL decision experiment
+
+on:
+  push:
+    branches: [neuron-v4-rl-decision-experiment]
+    paths: ["neuron_core/**", "tests/**", "benchmarks/**", ".github/workflows/neuron-v4-rl.yml"]
+  pull_request:
+    branches: [neuron-v4-rl-decision-experiment]
+    paths: ["neuron_core/**", "tests/**", "benchmarks/**", ".github/workflows/neuron-v4-rl.yml"]
+  workflow_dispatch:
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Test core and isolated decision policy
+        run: |
+          python -m unittest discover -s tests -v
+          python -m unittest discover -s tests -p "test_decision.py" -v
+
+  rl-vs-baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Rerun meaning-understanding baseline
+        run: python benchmarks/benchmark_meaning_understanding.py --top-k 5 --json-output neuron-meaning-baseline.json
+      - name: Compare baseline and RL decision layer on held-out cases
+        run: python benchmarks/benchmark_rl_decision.py > neuron-rl-comparison.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: neuron-v4-rl-decision-comparison
+          path: |
+            neuron-meaning-baseline.json
+            neuron-rl-comparison.json
+          if-no-files-found: error
+
+  full-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      TOKENIZERS_PARALLELISM: "false"
+      HF_HUB_DISABLE_PROGRESS_BARS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install neural matrix comparison dependency
+        run: python -m pip install "sentence-transformers==6.1.0"
+      - name: Rerun graph versus neural matrix benchmark
+        run: python benchmarks/benchmark_neural_matrix_vs_graph.py --sizes 100,1000,5000 --json-output neuron-vs-matrix-results.json
+      - name: Rerun adversarial reasoning benchmark
+        run: python benchmarks/benchmark_adversarial_reasoning.py --sizes 100,1000,5000 --json-output adversarial-reasoning-results.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: neuron-v4-rl-full-regression
+          path: |
+            neuron-vs-matrix-results.json
+            adversarial-reasoning-results.json
+          if-no-files-found: error

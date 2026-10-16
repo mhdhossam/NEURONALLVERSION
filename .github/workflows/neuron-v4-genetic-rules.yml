@@ -22,8 +22,12 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Compare genetic rules with genetic weights
         run: python benchmarks/benchmark_genetic_rules.py
+      - name: Run clean held-out transfer and regression test
+        run: python benchmarks/benchmark_genetic_transfer.py
       - uses: actions/upload-artifact@v4
         with:
           name: neuron-v4-genetic-rule-results
-          path: neuron-genetic-rule-results.json
+          path: |
+            neuron-genetic-rule-results.json
+            neuron-genetic-transfer-results.json
           if-no-files-found: error

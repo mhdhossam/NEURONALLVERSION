@@ -105,3 +105,19 @@ jobs:
           name: neuron-reasoning-experiment-results
           path: neuron-reasoning-results.json
           if-no-files-found: error
+
+  meaning-understanding-diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Benchmark meaning preservation before architecture changes
+        run: python benchmarks/benchmark_meaning_understanding.py --top-k 5 --json-output neuron-meaning-results.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: neuron-v4-meaning-understanding-results
+          path: neuron-meaning-results.json
+          if-no-files-found: error

@@ -52,12 +52,7 @@ def main():
         first_ms = (time.perf_counter_ns() - start) / 1e6
         # Labels are revealed only after first attempt. Correct targets must exist in
         # retrieval output; otherwise this ranker cannot fix the case.
-        if case["mode"] == "abstain":
-            if candidates:
-                # This exposes a limitation: current genome has no abstention mechanism.
-                # Do not pretend the wrong retrieved answer is a correct target.
-                pass
-        else:
+        if not first_correct and case["mode"] != "abstain":
             expected = set(case["expected"])
             available = [r["name"] for r in candidates if r["name"] in expected]
             if available:
@@ -102,7 +97,7 @@ def main():
             "Hand-authored benchmark labels act as verifier feedback only after first attempt.",
             "This component only reorders retrieved candidates; missing facts remain missing.",
             "No learned abstention mechanism is implemented in this first experiment.",
-            "Sequential results are sensitive to case order and do not prove broad generalization.",
+            "Only incorrect first attempts trigger evolution; correct first attempts are left unchanged.\nSequential results are sensitive to case order and do not prove broad generalization.",
         ],
     }
     rendered = json.dumps(report, indent=2, ensure_ascii=False)

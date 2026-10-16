@@ -1,0 +1,29 @@
+name: Neuron v4 genetic learning experiment
+
+on:
+  push:
+    branches: [neuron-v4-genetic-learning-experiment]
+    paths: ["neuron_core/**", "tests/**", "benchmarks/**", ".github/workflows/neuron-v4-genetic.yml"]
+  pull_request:
+    branches: [neuron-v4-genetic-learning-experiment]
+    paths: ["neuron_core/**", "tests/**", "benchmarks/**", ".github/workflows/neuron-v4-genetic.yml"]
+  workflow_dispatch:
+
+jobs:
+  genetic-learning:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run lightweight unit suite
+        run: python -m unittest discover -s tests -v
+      - name: Run first-attempt genetic learning benchmark
+        run: python benchmarks/benchmark_genetic_learning.py --top-k 5 --json-output neuron-genetic-learning.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: neuron-v4-genetic-learning-results
+          path: neuron-genetic-learning.json
+          if-no-files-found: error

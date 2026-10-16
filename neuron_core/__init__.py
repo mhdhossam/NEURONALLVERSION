@@ -16,7 +16,7 @@ from .search import (
 __all__ = [
     "ActivationResult", "Evidence", "KnowledgeObject", "Neuron",
     "NeuronGraph", "Region", "Synapse", "trace_processing",
-    "explore_reasoning", "DuckDuckGoHTMLProvider", "FallbackSearchProvider",
+    "explore_reasoning", "ReconstructedNeuron", "DuckDuckGoHTMLProvider", "FallbackSearchProvider",
     "SearchError", "SearchResult", "SQLiteCachedSearchProvider",
     "WikipediaSearchProvider", "think_with_search",
 ]

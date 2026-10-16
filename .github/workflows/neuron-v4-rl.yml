@@ -34,12 +34,15 @@ jobs:
         run: python benchmarks/benchmark_meaning_understanding.py --top-k 5 --json-output neuron-meaning-baseline.json
       - name: Compare baseline and RL decision layer on held-out cases
         run: python benchmarks/benchmark_rl_decision.py --json-output neuron-rl-comparison.json
+      - name: Compare feedback-reconstructed activation and paths
+        run: python benchmarks/benchmark_reconstruction.py --json-output neuron-reconstruction-comparison.json
       - uses: actions/upload-artifact@v4
         with:
           name: neuron-v4-rl-decision-comparison
           path: |
             neuron-meaning-baseline.json
             neuron-rl-comparison.json
+            neuron-reconstruction-comparison.json
           if-no-files-found: error
 
   full-regression:

@@ -50,6 +50,7 @@ def main():
                                   workers=1, record_history=False)
         first = learner.rank(case["query"], candidates)[:args.top_k]
         first_ms = (time.perf_counter_ns() - start) / 1e6
+        first_correct = top1(case, first)
         # Labels are revealed only after first attempt. Correct targets must exist in
         # retrieval output; otherwise this ranker cannot fix the case.
         if not first_correct and case["mode"] != "abstain":

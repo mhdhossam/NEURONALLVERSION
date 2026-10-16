@@ -36,6 +36,8 @@ jobs:
         run: python benchmarks/benchmark_rl_decision.py --json-output neuron-rl-comparison.json
       - name: Compare feedback-reconstructed activation and paths
         run: python benchmarks/benchmark_reconstruction.py --json-output neuron-reconstruction-comparison.json
+      - name: Learn online from the first attempt, then retry
+        run: python benchmarks/benchmark_first_attempt_learning.py --top-k 5 --json-output neuron-first-attempt-learning.json
       - uses: actions/upload-artifact@v4
         with:
           name: neuron-v4-rl-decision-comparison
@@ -43,6 +45,7 @@ jobs:
             neuron-meaning-baseline.json
             neuron-rl-comparison.json
             neuron-reconstruction-comparison.json
+            neuron-first-attempt-learning.json
           if-no-files-found: error
 
   full-regression:

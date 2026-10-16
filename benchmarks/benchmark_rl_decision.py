@@ -77,7 +77,8 @@ def main():
         baseline_ms = (time.perf_counter_ns() - started) / 1e6
         started = time.perf_counter_ns()
         policy = ranker.rank(case["query"], baseline, explore=False)
-        policy_ms = (time.perf_counter_ns() - started) / 1e6
+        # Include graph retrieval as well as reranking for fair end-to-end latency.
+        policy_ms = baseline_ms + (time.perf_counter_ns() - started) / 1e6
         expected, mode = set(case["expected"]), case["mode"]
         base_names, policy_names = [x["name"] for x in baseline], [x["name"] for x in policy]
         if mode == "abstain":

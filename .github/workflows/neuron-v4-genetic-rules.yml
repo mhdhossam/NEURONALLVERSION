@@ -1,0 +1,29 @@
+name: Neuron v4 genetic rule evolution
+
+on:
+  push:
+    branches: [neuron-v4-genetic-rule-evolution]
+    paths: ["neuron_core/**", "tests/**", "benchmarks/**", ".github/workflows/neuron-v4-genetic-rules.yml"]
+  pull_request:
+    branches: [neuron-v4-genetic-rule-evolution]
+    paths: ["neuron_core/**", "tests/**", "benchmarks/**", ".github/workflows/neuron-v4-genetic-rules.yml"]
+  workflow_dispatch:
+
+jobs:
+  genetic-rule-evolution:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run full unit suite
+        run: python -m unittest discover -s tests -v
+      - name: Compare genetic rules with genetic weights
+        run: python benchmarks/benchmark_genetic_rules.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: neuron-v4-genetic-rule-results
+          path: neuron-genetic-rule-results.json
+          if-no-files-found: error

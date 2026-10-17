@@ -1,0 +1,43 @@
+name: Neuron V3 Fashion-MNIST classification
+
+on:
+  push:
+    branches:
+      - experiment/neuron-v3-image-baseline-2026-10-17
+    paths:
+      - "experiments/neuron_v3_fashion_classification.py"
+      - ".github/workflows/neuron-v3-fashion-classification.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  fashion-classification:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy scikit-learn
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Run Fashion-MNIST classification through real Neuron V3
+        run: |
+          python experiments/neuron_v3_fashion_classification.py \
+            --train-per-class 500 \
+            --test-per-class 100 \
+            --epochs 6 \
+            --top-k 100 \
+            --json-output artifacts/neuron-v3-fashion-classification.json
+      - name: Upload classification results
+        uses: actions/upload-artifact@v4
+        with:
+          name: neuron-v3-fashion-classification-results
+          path: artifacts/neuron-v3-fashion-classification.json
+          if-no-files-found: error

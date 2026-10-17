@@ -195,8 +195,8 @@ def main() -> None:
     # Both graph-based runs get identical normalized image features and exemplars.
     train_features = X_train.reshape(len(X_train), -1)
     test_features = X_test.reshape(len(X_test), -1)
-    train_features /= np.maximum(np.linalg.norm(train_features, axis=1, keepdims=True), 1e-12)
-    test_features /= np.maximum(np.linalg.norm(test_features, axis=1, keepdims=True), 1e-12)
+    train_features = train_features / np.maximum(np.linalg.norm(train_features, axis=1, keepdims=True), 1e-12)
+    test_features = test_features / np.maximum(np.linalg.norm(test_features, axis=1, keepdims=True), 1e-12)
 
     guard = load_repository_guard()
     smoke = run_guard_smoke_tests(guard)

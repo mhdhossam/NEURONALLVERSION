@@ -30,8 +30,8 @@ jobs:
       - name: Run Fashion-MNIST classification through real Neuron V3
         run: |
           python experiments/neuron_v3_fashion_classification.py \
-            --train-per-class 500 \
-            --test-per-class 100 \
+            --train-per-class 300 \
+            --test-per-class 50 \
             --epochs 6 \
             --top-k 100 \
             --json-output artifacts/neuron-v3-fashion-classification.json

@@ -1,7 +1,7 @@
 {
   "status": "EXECUTED_LOCALLY",
   "benchmark": "Neuron metadata-guard error-feedback generalization",
-  "generated_at_utc": "2026-10-17T02:42:00Z",
+  "generated_at_utc": "2026-10-17T02:42:25.664011+00:00",
   "dataset": "scikit-learn load_digits: 1,797 8x8 grayscale digit images",
   "guard": {
     "source": "Metadata-selection guard functions/constants extracted from Untitled36.ipynb",
@@ -69,5 +69,5 @@
     "2035": 0
   },
   "interpretation": "Weak positive signal only. Error-feedback accuracy improved slightly more than the count/class-matched random-memory control, but gains were small and inconsistent: 3 seeds improved, 6 were unchanged, and 1 regressed. The exact failure-pattern cohort was small. This does not establish strong generalization or human-like learning.",
-  "local_detailed_report": "error-generalization-results.json"
+  "detailed_report_available_as_chat_attachment": true
 }

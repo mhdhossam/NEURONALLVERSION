@@ -169,10 +169,13 @@ def build_cnn(seed: int) -> nn.Module:
 
 
 def main() -> None:
+    global SEED
     parser = argparse.ArgumentParser()
     parser.add_argument("--json-output", default="benchmarks/results/metadata-guard-classification-results.json")
     parser.add_argument("--epochs", type=int, default=18)
+    parser.add_argument("--seed", type=int, default=SEED)
     args = parser.parse_args()
+    SEED = args.seed
 
     np.random.seed(SEED)
     torch.manual_seed(SEED)

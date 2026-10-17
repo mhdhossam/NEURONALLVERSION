@@ -1,11 +1,11 @@
 {
   "execution_status": "EXECUTED_LOCALLY",
   "benchmark": "Neuron metadata guard open-set image-classification diagnostic",
-  "date_utc": "2026-10-17T02:01:34Z",
+  "date_utc": "2026-10-17T02:02:39Z",
   "seed": 2026,
   "dataset": "sklearn.datasets.load_digits (8x8 grayscale)",
   "protocol": {
-    "split": "stratified 75/25; random_state=2026; shared test split",
+    "split": "stratified 75/25 train/test; known training pool further split 85/15 fit/calibration; random_state=2026",
     "known_classes": [
       0,
       1,
@@ -20,19 +20,23 @@
       8,
       9
     ],
-    "train_samples_known": 1081,
+    "train_samples_known_fit": 918,
+    "known_validation_samples_for_cnn_confidence_calibration": 163,
     "test_samples_total": 450,
     "test_samples_known": 362,
     "test_samples_unknown": 88,
     "features": "L2-normalized flattened pixels; class score is mean top-3 cosine similarities",
-    "guard_source": "Guard policy executed from the implementation in Untitled36.ipynb (metadata guard functions and thresholds)",
+    "guard_source": "Metadata guard functions and thresholds from NEURONALLVERSION/Untitled36.ipynb, applied to normalized exemplar embeddings",
     "guard_thresholds": {
       "minimum_similarity": 0.6,
       "minimum_margin": 0.025,
       "top_exemplars": 3
     },
-    "cnn": "two-convolution CPU CNN, trained 18 epochs on the same known-class training split; no unknown-rejection head",
-    "limitation": "Controlled small-image guard-policy test. Not a FaceNet embedding evaluation or a test of the full face-recognition pipeline."
+    "cnn": "two-convolution CPU CNN, 18 epochs, trained on the same fit split of known classes",
+    "cnn_rejection_calibration": "confidence threshold chosen at the 5th percentile of max-softmax confidence on separate known-only validation images; unknown test labels were not used",
+    "cnn_rejection_threshold": 0.7996901869773865,
+    "cnn_calibration_coverage": 0.9448,
+    "limitation": "This is a reproducible small-image guard-policy experiment, not the full face-recognition pipeline and not a FaceNet embedding test."
   },
   "guard_smoke_tests": {
     "passed": 4,
@@ -43,20 +47,20 @@
       "missing_metadata_rejected": true
     }
   },
-  "cnn_training_seconds": 0.9918,
+  "cnn_training_seconds": 0.7397,
   "results": {
     "neuron_metadata_guard": {
       "known_test_count": 362,
       "unknown_test_count": 88,
-      "known_end_to_end_accuracy": 0.9807,
-      "known_coverage": 0.9862,
+      "known_end_to_end_accuracy": 0.9779,
+      "known_coverage": 0.9834,
       "known_selective_accuracy": 0.9944,
       "unknown_rejection_rate": 0.5909,
       "unknown_false_accept_rate": 0.4091,
-      "safe_overall_rate": 0.9044,
-      "latency_ms_mean": 3.5724,
-      "latency_ms_p50": 3.4419,
-      "latency_ms_p95": 4.4544
+      "safe_overall_rate": 0.9022,
+      "latency_ms_mean": 2.9102,
+      "latency_ms_p50": 2.8222,
+      "latency_ms_p95": 3.5706
     },
     "neuron_similarity_without_guard": {
       "known_test_count": 362,
@@ -67,23 +71,36 @@
       "unknown_rejection_rate": 0,
       "unknown_false_accept_rate": 1,
       "safe_overall_rate": 0.8,
-      "latency_ms_mean": 2.7724,
-      "latency_ms_p50": 2.6667,
-      "latency_ms_p95": 3.3453
+      "latency_ms_mean": 2.2258,
+      "latency_ms_p50": 2.1382,
+      "latency_ms_p95": 2.6793
     },
-    "small_cnn_baseline": {
+    "small_cnn_baseline_closed_set": {
       "known_test_count": 362,
       "unknown_test_count": 88,
-      "known_end_to_end_accuracy": 0.9724,
+      "known_end_to_end_accuracy": 0.9586,
       "known_coverage": 1,
-      "known_selective_accuracy": 0.9724,
+      "known_selective_accuracy": 0.9586,
       "unknown_rejection_rate": 0,
       "unknown_false_accept_rate": 1,
-      "safe_overall_rate": 0.7822,
-      "latency_ms_mean": 0.0659,
-      "latency_ms_p50": 0.052,
-      "latency_ms_p95": 0.106
+      "safe_overall_rate": 0.7711,
+      "latency_ms_mean": 0.073,
+      "latency_ms_p50": 0.0581,
+      "latency_ms_p95": 0.1631
+    },
+    "small_cnn_baseline_with_calibrated_rejection": {
+      "known_test_count": 362,
+      "unknown_test_count": 88,
+      "known_end_to_end_accuracy": 0.895,
+      "known_coverage": 0.9061,
+      "known_selective_accuracy": 0.9878,
+      "unknown_rejection_rate": 0.6705,
+      "unknown_false_accept_rate": 0.3295,
+      "safe_overall_rate": 0.8511,
+      "latency_ms_mean": 0.073,
+      "latency_ms_p50": 0.0581,
+      "latency_ms_p95": 0.1631
     }
   },
-  "interpretation": "On this fixed small-digit test, the guard-enabled exemplar classifier scores 0.83 percentage points higher on known-class end-to-end accuracy than the small CNN and rejects 59.09% of held-out unknowns. The unguarded exemplar classifier has the highest known-only accuracy, but accepts all held-out unknowns. These results do not establish superiority on natural images or face recognition."
+  "interpretation": "On this one fixed split, guarded Neuron has 97.79% known-class end-to-end accuracy versus 95.86% for the same CNN in closed-set mode. Against a CNN with confidence rejection calibrated on known-only validation data, Neuron keeps 98.34% known coverage with 99.44% selective accuracy; the calibrated CNN keeps 90.61% coverage with 98.78% selective accuracy and rejects more unknown-class images (67.05% versus 59.09%). This is promising for this toy task, not proof of full-architecture superiority."
 }

@@ -130,6 +130,19 @@ python benchmarks/benchmark_neuron_facenet_lfw.py --seeds 2026,2027,2028 --max-k
 
 GitHub Actions runs this benchmark in the `facenet-neuron-open-set` job and uploads the JSON report as `neuron-facenet-lfw-results`. Do not claim general superiority based on one dataset/checkpoint; inspect known coverage, selective accuracy, unknown rejection and per-seed variability together.
 
+## Error-feedback generalization test
+
+The exploratory error-feedback benchmark in `benchmarks/benchmark_error_generalization.py` tests whether adding a correctly labeled exemplar after a wrong/rejected prediction helps on separate, untouched examples. It extracts the metadata-selection guard and thresholds from `Untitled36.ipynb`, keeps classes 8 and 9 out of the memory/feedback loop, and compares error-driven updates with equal-count, per-class random exemplar growth.
+
+Run it with:
+
+```bash
+python -m pip install numpy scikit-learn
+python benchmarks/benchmark_error_generalization.py --seeds 2026,2027,2028,2029,2030,2031,2032,2033,2034,2035 --json-output benchmarks/results/neuron-error-generalization-ci-results.json
+```
+
+The local 10-seed pilot summary is in `benchmarks/results/neuron-error-generalization-summary.json`. It showed a small, inconsistent signal: mean known-audit accuracy increased from 97.76% to 97.85% after error feedback, while a count/class-matched random-memory control remained at 97.76%. One seed regressed, and the exact same-failure audit cohort was small. Treat this as an exploratory diagnostic, not evidence of robust generalization or human-like learning. GitHub Actions also uploads the reproducible run as `neuron-error-generalization-ci-results`.
+
 ## Decision verification
 
 A decision policy can pass its proposed subject, typed relation, target, and the

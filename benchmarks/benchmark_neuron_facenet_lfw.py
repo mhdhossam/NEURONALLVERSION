@@ -295,31 +295,37 @@ def main() -> None:
         selected_indices = indices[:cap]
         class_caps[name] = len(selected_indices)
         selected.extend((int(index), int(class_id), name) for index in selected_indices)
-    print(f"Selected {len(selected)} LFW images before MTCNN detection", flush=True)
+    print(f"Selected {len(selected)} LFW images; LFW supplies pre-cropped/funneled faces", flush=True)
 
-    from facenet_pytorch import InceptionResnetV1, MTCNN
-    mtcnn = MTCNN(image_size=160, margin=10, device=device)
+    # fetch_lfw_people returns face crops already aligned/cropped to the subject.
+    # Running MTCNN again on these tight crops yields zero detections, so preserve
+    # the crop geometry and resize directly to FaceNet's 160x160 input. Standardize
+    # pixel values to [-1, 1], matching facenet-pytorch's MTCNN output convention.
+    from facenet_pytorch import InceptionResnetV1
     face_crops: list[torch.Tensor] = []
     person_names: list[str] = []
     source_indices: list[int] = []
-    detection_by_person: dict[str, dict[str, int]] = defaultdict(lambda: {"attempted": 0, "detected": 0})
-    detection_seconds_start = time.perf_counter()
+    preprocessing_seconds_start = time.perf_counter()
     for i, (source_index, class_id, name) in enumerate(selected, start=1):
-        detection_by_person[name]["attempted"] += 1
-        raw = np.asarray(images[source_index])
-        # sklearn returns RGB face crops on a 0..255 scale.
-        pil = Image.fromarray(np.clip(raw, 0, 255).astype(np.uint8), mode="RGB")
-        crop = mtcnn(pil)
-        if crop is not None and crop.shape == (3, 160, 160) and torch.isfinite(crop).all():
-            face_crops.append(crop.detach().cpu().float())
+        raw = np.asarray(images[source_index], dtype=np.float32)
+        if raw.ndim != 3 or raw.shape[-1] != 3:
+            raise RuntimeError(f"Expected RGB LFW crop, got shape {raw.shape}")
+        if float(np.nanmax(raw)) <= 1.0:
+            raw = raw * 255.0
+        rgb = Image.fromarray(np.clip(raw, 0, 255).astype(np.uint8), mode="RGB")
+        rgb = rgb.resize((160, 160), resample=Image.Resampling.BILINEAR)
+        pixels = np.asarray(rgb, dtype=np.float32)
+        crop = torch.from_numpy(pixels).permute(2, 0, 1).contiguous()
+        crop = crop / 127.5 - 1.0
+        if crop.shape == (3, 160, 160) and bool(torch.isfinite(crop).all()):
+            face_crops.append(crop)
             person_names.append(name)
             source_indices.append(source_index)
-            detection_by_person[name]["detected"] += 1
         if i % 50 == 0 or i == len(selected):
-            print(f"MTCNN {i}/{len(selected)}; detected {len(face_crops)}", flush=True)
-    detection_seconds = time.perf_counter() - detection_seconds_start
+            print(f"Prepared LFW crops {i}/{len(selected)}", flush=True)
+    preprocessing_seconds = time.perf_counter() - preprocessing_seconds_start
     if len(face_crops) < 100:
-        raise RuntimeError(f"Too few usable LFW faces after MTCNN: {len(face_crops)}")
+        raise RuntimeError(f"Too few usable LFW crops after resize/normalization: {len(face_crops)}")
     crops = torch.stack(face_crops)
     people = np.asarray(person_names, dtype=object)
     known_set = set(known_names)
@@ -353,19 +359,14 @@ def main() -> None:
     cnn_training_seconds_by_seed = {}
     svc_training_seconds_by_seed = {}
     embedding_diagnostics = {
-        "images_selected_before_detection": int(len(selected)),
-        "images_with_usable_face": int(len(crops)),
-        "mtcnn_detection_rate": round(len(crops) / max(1, len(selected)), 4),
-        "mtcnn_preprocessing_seconds": round(detection_seconds, 3),
+        "images_selected_from_lfw_pre_cropped_faces": int(len(selected)),
+        "images_preprocessed": int(len(crops)),
+        "crop_preprocessing": "resize pre-cropped LFW RGB faces to 160x160; normalize raw pixel values to [-1,1] (the FaceNet MTCNN-output convention)",
+        "crop_preprocessing_seconds": round(preprocessing_seconds, 3),
         "facenet_embedding_seconds": round(embedding_seconds, 3),
         "facenet_embedding_throughput_ms_per_image": round(1000 * embedding_seconds / max(1, len(crops)), 4),
-        "usable_faces_by_identity": {name: int(np.sum(people == name)) for name in known_names + unknown_names},
-        "detection_rate_by_identity": {
-            name: round(
-                detection_by_person[name]["detected"] / max(1, detection_by_person[name]["attempted"]), 4
-            ) for name in known_names + unknown_names
-        },
-        "source_images_per_identity_before_detection": class_caps,
+        "preprocessed_faces_by_identity": {name: int(np.sum(people == name)) for name in known_names + unknown_names},
+        "source_images_per_identity": class_caps,
     }
 
     for seed in seeds:
@@ -539,7 +540,7 @@ def main() -> None:
             "torch": torch.__version__,
             "device": str(device),
             "face_extractor": "facenet-pytorch InceptionResnetV1(pretrained='vggface2')",
-            "face_detector": "facenet-pytorch MTCNN(image_size=160, margin=10)",
+            "face_preprocessing": "LFW funneled subject crops resized to 160x160 and normalized to [-1,1]; MTCNN intentionally skipped because this dataset is already cropped",
             "dataset": "Labeled Faces in the Wild (LFW), scikit-learn fetch_lfw_people, color=True, resize=1.0, min_faces_per_person=20",
         },
         "protocol": {
@@ -552,7 +553,7 @@ def main() -> None:
             "max_images_per_unknown_identity": args.max_unknown_per_person,
             "known_split": "Per identity 65% fit / 15% known-only validation calibration / remaining 20% test, split separately per seed",
             "unknown_split": "Selected images of unknown identities are test-only; never used for training, exemplars, or threshold calibration",
-            "shared_test_crops": "All compared methods use the same MTCNN-aligned test face crops; all train/validation/test image indices are shared per seed",
+            "shared_test_crops": "All compared methods use the same pre-cropped LFW images resized to FaceNet/CNN input sizes; all train/validation/test image indices are shared per seed",
             "neuron_guard_source": "Exact guard functions/constants AST-extracted from Untitled36.ipynb; all identity nodes are in one global candidate region",
             "cnn": f"Small CNN trained from scratch on the aligned training face crops for {args.cnn_epochs} epochs per seed",
             "calibration": "SVM and CNN rejection thresholds are the 5th percentile of maximum class confidence on known-only validation images; no unknown test labels are used for calibration",

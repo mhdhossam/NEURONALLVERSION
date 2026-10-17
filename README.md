@@ -103,9 +103,12 @@ Run the reproducible open-set guard benchmark from the repository root:
 ```bash
 python -m pip install numpy scikit-learn torch
 python benchmarks/benchmark_metadata_guard_classification.py --json-output benchmarks/results/metadata-guard-classification-results.json
+
+# Repeat over several fixed seeds and aggregate mean/std:
+python benchmarks/benchmark_metadata_guard_multiseed.py --seeds 2022,2023,2024,2026 --json-output benchmarks/results/metadata-guard-multiseed-summary.json
 ```
 
-The benchmark extracts the current `_normalise_embedding` and `find_best_in_candidates` functions and thresholds directly from `Untitled36.ipynb`. It compares the guard-enabled decision, the same similarity ranking without rejection thresholds (ablation), and a small CNN on a shared held-out test split. Digits 0–7 are known classes; digits 8–9 are withheld from training to probe unknown rejection. The known-class training pool is split again into a fit partition and a known-only calibration partition. In addition to closed-set CNN accuracy, the benchmark evaluates a CNN confidence-rejection policy whose threshold is calibrated on known-only validation confidence, without using unknown test labels. The JSON report includes accuracy, coverage, unknown rejection/false acceptance, latency, thresholds, and guard regression checks. CI uploads the report as an artifact.
+The benchmark extracts the current `_normalise_embedding` and `find_best_in_candidates` functions and thresholds directly from `Untitled36.ipynb`. It compares the guard-enabled decision, the same similarity ranking without rejection thresholds (ablation), and a small CNN on a shared held-out test split. Digits 0–7 are known classes; digits 8–9 are withheld from training to probe unknown rejection. The known-class training pool is split again into a fit partition and a known-only calibration partition. In addition to closed-set CNN accuracy, the benchmark evaluates a CNN confidence-rejection policy whose threshold is calibrated on known-only validation confidence, without using unknown test labels. The JSON report includes accuracy, coverage, unknown rejection/false acceptance, latency, thresholds, and guard regression checks. CI uploads the report as an artifact. A four-seed summary is checked in at `benchmarks/results/metadata-guard-multiseed-summary.json`; it is still only a small-image guard-policy diagnostic, not a FaceNet evaluation.
 
 This offline test isolates the metadata guard on small grayscale image features; it is **not** a FaceNet benchmark and does not replace a run on the original local face-recognition dataset/pretrained embeddings.
 

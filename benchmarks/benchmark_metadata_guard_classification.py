@@ -189,7 +189,13 @@ def main() -> None:
         random_state=SEED,
     )
     keep_known = np.isin(y_train_all, list(KNOWN_LABELS))
-    X_train, y_train = X_train_all[keep_known], y_train_all[keep_known]
+    X_train_pool, y_train_pool = X_train_all[keep_known], y_train_all[keep_known]
+    # Reserve known-only calibration data so the CNN can use a fair confidence-based
+    # rejection policy without ever tuning on the withheld unknown test classes.
+    X_train, X_val, y_train, y_val = train_test_split(
+        X_train_pool, y_train_pool, test_size=0.15, stratify=y_train_pool,
+        random_state=SEED,
+    )
     known_mask = np.isin(y_test, list(KNOWN_LABELS))
 
     # Both graph-based runs get identical normalized image features and exemplars.
@@ -245,13 +251,24 @@ def main() -> None:
     cnn_train_seconds = time.perf_counter() - train_start
 
     model.eval()
-    cnn, cnn_ms = [], []
+    cnn, cnn_rejected, cnn_ms = [], [], []
     with torch.inference_mode():
+        val_tensor = torch.tensor(X_val[:, None], dtype=torch.float32)
+        val_confidence = model(val_tensor).softmax(dim=1).max(dim=1).values.cpu().numpy()
+        # Calibrate the CNN rejection threshold using only known-class validation images.
+        # The threshold targets ~95% validation coverage and never uses unknown labels.
+        cnn_rejection_threshold = float(np.quantile(val_confidence, 0.05))
         for image in X_test:
             tensor = torch.tensor(image[None, None], dtype=torch.float32)
             start = time.perf_counter_ns()
-            cnn.append(int(model(tensor).argmax(dim=1).item()))
+            probabilities = model(tensor).softmax(dim=1)[0]
+            confidence, prediction = probabilities.max(dim=0)
+            predicted_label = int(prediction.item())
+            accepted = float(confidence.item()) >= cnn_rejection_threshold
+            cnn.append(predicted_label)
+            cnn_rejected.append(predicted_label if accepted else None)
             cnn_ms.append((time.perf_counter_ns() - start) / 1e6)
+    cnn_calibration_coverage = float(np.mean(val_confidence >= cnn_rejection_threshold))
 
     result = {
         "benchmark": "Neuron metadata guard open-set image classification",
@@ -259,10 +276,11 @@ def main() -> None:
         "seed": SEED,
         "dataset": "sklearn.datasets.load_digits (8x8 grayscale; offline)",
         "protocol": {
-            "split": "stratified 75/25; random_state=2026; shared test set",
+            "split": "stratified 75/25 train/test; known training pool further split 85/15 fit/calibration; random_state=2026",
             "known_classes": sorted(KNOWN_LABELS),
             "unknown_classes_held_out_from_training": sorted(UNKNOWN_LABELS),
-            "train_samples_known": int(len(y_train)),
+            "train_samples_known_fit": int(len(y_train)),
+            "known_validation_samples_for_cnn_confidence_calibration": int(len(y_val)),
             "test_samples_total": int(len(y_test)),
             "test_samples_known": int(known_mask.sum()),
             "test_samples_unknown": int((~known_mask).sum()),
@@ -273,15 +291,19 @@ def main() -> None:
                 "minimum_margin": float(guard["NEURON_METADATA_MIN_MARGIN"]),
                 "top_exemplars": int(guard["NEURON_METADATA_TOP_EXEMPLARS"]),
             },
-            "cnn": f"two-convolution CPU CNN trained for {args.epochs} epochs; no unknown/rejection head",
-            "limitation": "This measures guard policy on a reproducible small-image feature space; it is not a FaceNet benchmark or a run on the unavailable local face dataset.",
+            "cnn": f"two-convolution CPU CNN trained for {args.epochs} epochs on fit split; unknown classes are excluded from training",
+            "cnn_rejection_calibration": "confidence threshold is the 5th percentile of max-softmax confidence on a separate known-only calibration split; unknown test labels are not used",
+            "cnn_rejection_threshold": cnn_rejection_threshold,
+            "cnn_calibration_coverage": round(cnn_calibration_coverage, 4),
+            "limitation": "Controlled small-image guard-policy comparison, not a FaceNet benchmark or a run on the unavailable local face dataset.",
         },
         "guard_smoke_tests": smoke,
         "cnn_training_seconds": round(cnn_train_seconds, 4),
         "results": {
             "neuron_metadata_guard": evaluate(guarded, y_test, known_mask, guarded_ms),
             "neuron_same_similarity_no_guard_ablation": evaluate(plain, y_test, known_mask, plain_ms),
-            "small_cnn_baseline": evaluate(cnn, y_test, known_mask, cnn_ms),
+            "small_cnn_baseline_closed_set": evaluate(cnn, y_test, known_mask, cnn_ms),
+            "small_cnn_baseline_with_calibrated_rejection": evaluate(cnn_rejected, y_test, known_mask, cnn_ms),
         },
     }
     output = Path(args.json_output)

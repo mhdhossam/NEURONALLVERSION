@@ -1,0 +1,40 @@
+name: Neuron V3 image baseline (isolated experiment)
+
+on:
+  push:
+    branches:
+      - experiment/neuron-v3-image-baseline-2026-10-17
+    paths:
+      - "experiments/neuron_v3_image_baseline.py"
+      - ".github/workflows/neuron-v3-image-baseline.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  image-baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install benchmark dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy scikit-learn
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Run image comparison against the real Neuron v3 engine
+        run: |
+          python experiments/neuron_v3_image_baseline.py \
+            --epochs 20 \
+            --json-output artifacts/neuron-v3-image-baseline.json
+      - name: Upload reproducible results
+        uses: actions/upload-artifact@v4
+        with:
+          name: neuron-v3-image-baseline-results
+          path: artifacts/neuron-v3-image-baseline.json
+          if-no-files-found: error

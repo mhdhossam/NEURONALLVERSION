@@ -1,0 +1,226 @@
+{
+  "status": "EXECUTED_LOCALLY",
+  "benchmark": "Multi-seed open-set image-classification diagnostic",
+  "seeds": [
+    2022,
+    2023,
+    2024,
+    2026
+  ],
+  "dataset": "scikit-learn load_digits, 8x8 grayscale",
+  "protocol": {
+    "known_classes": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "unknown_classes_excluded_from_training": [
+      8,
+      9
+    ],
+    "split": "stratified 75/25 train/test; fit split and known-only calibration split (85/15 of known training pool); per-run seed controls split and training",
+    "fit_train_images": 918,
+    "calibration_images": 163,
+    "known_test_images": 362,
+    "unknown_test_images": 88,
+    "neuron_method": "metadata guard from Untitled36.ipynb; normalized flattened pixels; mean top-3 exemplar cosine similarity",
+    "guard_thresholds": {
+      "minimum_similarity": 0.6,
+      "minimum_margin": 0.025,
+      "top_exemplars": 3
+    },
+    "cnn_method": "two-convolution CNN trained on the same fit images for 18 epochs; calibrated rejection cutoff is the 5th percentile of maximum softmax confidence on known-only calibration images",
+    "unknown_labels_not_used_for_threshold_calibration": true,
+    "limitation": "This evaluates guard/exemplar decision logic on a tiny grayscale image dataset. It is not the full Neuron face-recognition pipeline, not FaceNet embeddings, and not evidence of general superiority on natural images."
+  },
+  "guard_regression_checks_passed_all_runs": true,
+  "summary_mean_population_std": {
+    "neuron_guard": {
+      "known_accuracy": {
+        "mean": 0.9786,
+        "std": 0.0049
+      },
+      "known_coverage": {
+        "mean": 0.9807,
+        "std": 0.0062
+      },
+      "selective_accuracy": {
+        "mean": 0.9979,
+        "std": 0.0023
+      },
+      "unknown_rejection_rate": {
+        "mean": 0.554,
+        "std": 0.0335
+      },
+      "unknown_false_accept_rate": {
+        "mean": 0.446,
+        "std": 0.0335
+      },
+      "safe_overall_rate": {
+        "mean": 0.8956,
+        "std": 0.0092
+      }
+    },
+    "neuron_without_guard": {
+      "known_accuracy": {
+        "mean": 0.9951,
+        "std": 0.0023
+      },
+      "known_coverage": {
+        "mean": 1,
+        "std": 0
+      },
+      "unknown_rejection_rate": {
+        "mean": 0,
+        "std": 0
+      },
+      "unknown_false_accept_rate": {
+        "mean": 1,
+        "std": 0
+      },
+      "safe_overall_rate": {
+        "mean": 0.8005,
+        "std": 0.0018
+      }
+    },
+    "cnn_closed_set": {
+      "known_accuracy": {
+        "mean": 0.971,
+        "std": 0.0074
+      },
+      "unknown_rejection_rate": {
+        "mean": 0,
+        "std": 0
+      },
+      "unknown_false_accept_rate": {
+        "mean": 1,
+        "std": 0
+      },
+      "safe_overall_rate": {
+        "mean": 0.7811,
+        "std": 0.006
+      }
+    },
+    "cnn_calibrated_rejection": {
+      "known_accuracy": {
+        "mean": 0.9199,
+        "std": 0.0212
+      },
+      "known_coverage": {
+        "mean": 0.9289,
+        "std": 0.023
+      },
+      "selective_accuracy": {
+        "mean": 0.9904,
+        "std": 0.0038
+      },
+      "unknown_rejection_rate": {
+        "mean": 0.5,
+        "std": 0.1562
+      },
+      "unknown_false_accept_rate": {
+        "mean": 0.5,
+        "std": 0.1562
+      },
+      "safe_overall_rate": {
+        "mean": 0.8378,
+        "std": 0.0141
+      }
+    }
+  },
+  "derived_differences_percentage_points": {
+    "neuron_guard_minus_cnn_closed_set_known_accuracy": 0.76,
+    "neuron_guard_minus_calibrated_cnn_known_coverage": 5.18,
+    "neuron_guard_minus_calibrated_cnn_selective_accuracy": 0.75,
+    "neuron_guard_minus_calibrated_cnn_unknown_rejection": 5.4,
+    "neuron_guard_minus_calibrated_cnn_safe_overall_rate": 5.78
+  },
+  "per_seed": {
+    "2022": {
+      "neuron_guard": {
+        "known_accuracy": 0.9862,
+        "known_coverage": 0.989,
+        "selective_accuracy": 0.9972,
+        "unknown_rejection": 0.5568,
+        "safe_overall": 0.9022
+      },
+      "cnn_closed": {
+        "known_accuracy": 0.9751,
+        "safe_overall": 0.7844
+      },
+      "cnn_calibrated": {
+        "known_accuracy": 0.9365,
+        "known_coverage": 0.9475,
+        "selective_accuracy": 0.9883,
+        "unknown_rejection": 0.4205,
+        "safe_overall": 0.8356
+      }
+    },
+    "2023": {
+      "neuron_guard": {
+        "known_accuracy": 0.9724,
+        "known_coverage": 0.9724,
+        "selective_accuracy": 1,
+        "unknown_rejection": 0.5,
+        "safe_overall": 0.88
+      },
+      "cnn_closed": {
+        "known_accuracy": 0.9779,
+        "safe_overall": 0.7867
+      },
+      "cnn_calibrated": {
+        "known_accuracy": 0.9448,
+        "known_coverage": 0.9558,
+        "selective_accuracy": 0.9884,
+        "unknown_rejection": 0.2841,
+        "safe_overall": 0.8156
+      }
+    },
+    "2024": {
+      "neuron_guard": {
+        "known_accuracy": 0.9779,
+        "known_coverage": 0.9779,
+        "selective_accuracy": 1,
+        "unknown_rejection": 0.5682,
+        "safe_overall": 0.8978
+      },
+      "cnn_closed": {
+        "known_accuracy": 0.9724,
+        "safe_overall": 0.7822
+      },
+      "cnn_calibrated": {
+        "known_accuracy": 0.9033,
+        "known_coverage": 0.9061,
+        "selective_accuracy": 0.997,
+        "unknown_rejection": 0.625,
+        "safe_overall": 0.8489
+      }
+    },
+    "2026": {
+      "neuron_guard": {
+        "known_accuracy": 0.9779,
+        "known_coverage": 0.9834,
+        "selective_accuracy": 0.9944,
+        "unknown_rejection": 0.5909,
+        "safe_overall": 0.9022
+      },
+      "cnn_closed": {
+        "known_accuracy": 0.9586,
+        "safe_overall": 0.7711
+      },
+      "cnn_calibrated": {
+        "known_accuracy": 0.895,
+        "known_coverage": 0.9061,
+        "selective_accuracy": 0.9878,
+        "unknown_rejection": 0.6705,
+        "safe_overall": 0.8511
+      }
+    }
+  },
+  "conclusion": "On these four test splits, the guarded exemplar method averaged 97.86% known-class accuracy versus 97.10% for the closed-set CNN. Compared with a confidence-calibrated CNN, it averaged higher known coverage and higher selective accuracy, while open-set rejection varied by split. This is promising evidence for this narrow setup only; it does not prove the complete Neuron architecture beats CNNs generally."
+}

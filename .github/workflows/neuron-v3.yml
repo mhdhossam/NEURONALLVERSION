@@ -141,6 +141,30 @@ jobs:
           path: benchmarks/results/neuron-error-learning-results.json
           if-no-files-found: error
 
+  error-feedback-generalization:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install benchmark dependencies
+        run: python -m pip install numpy scikit-learn
+      - name: Compare error feedback with count-matched random memory growth
+        run: >-
+          python benchmarks/benchmark_error_generalization.py
+          --seeds 2026,2027,2028,2029,2030,2031,2032,2033,2034,2035
+          --json-output benchmarks/results/neuron-error-generalization-ci-results.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: neuron-error-generalization-ci-results
+          path: benchmarks/results/neuron-error-generalization-ci-results.json
+          if-no-files-found: error
+
   context-processing-trace:
     runs-on: ubuntu-latest
     steps:

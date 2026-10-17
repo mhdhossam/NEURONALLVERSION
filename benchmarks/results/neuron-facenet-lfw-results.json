@@ -1,0 +1,363 @@
+{
+  "status": "EXECUTED — copied from GitHub Actions artifact output",
+  "benchmark": "Neuron FaceNet + metadata guard vs CNN and FaceNet-feature baseline",
+  "generated_at_utc": "2026-10-17T02:18:06.287219+00:00",
+  "source": {
+    "github_actions_run": "https://github.com/mhdhossam/NEURONALLVERSION/actions/runs/38994205504",
+    "artifact_name": "neuron-facenet-lfw-results",
+    "artifact_id": 12085753445,
+    "benchmark_script": "benchmarks/benchmark_neuron_facenet_lfw.py",
+    "tested_revision": "c4d38ff65e6cb6abe437dd5dc9ee5bd67be58e9d"
+  },
+  "environment": {
+    "python": "3.11.17",
+    "torch": "2.2.2+cu121",
+    "device": "cpu",
+    "face_extractor": "facenet-pytorch InceptionResnetV1(pretrained='vggface2')",
+    "face_preprocessing": "LFW funneled face crops resized to 160x160 and normalized to [-1,1]. MTCNN detection skipped because the dataset provides already-cropped/funneled faces.",
+    "dataset": "Labeled Faces in the Wild (LFW), scikit-learn fetch_lfw_people(color=True, resize=1.0, min_faces_per_person=20)"
+  },
+  "protocol": {
+    "seeds": [
+      2026,
+      2027,
+      2028
+    ],
+    "selected_faces": 670,
+    "known_test_images_per_seed": 117,
+    "unknown_test_images_per_seed": 120,
+    "known_identities": [
+      "George W Bush",
+      "Colin Powell",
+      "Tony Blair",
+      "Donald Rumsfeld",
+      "Gerhard Schroeder",
+      "Ariel Sharon",
+      "Hugo Chavez",
+      "Junichiro Koizumi"
+    ],
+    "unknown_identities_held_out_from_training": [
+      "Jean Chretien",
+      "John Ashcroft",
+      "Jacques Chirac",
+      "Serena Williams"
+    ],
+    "known_split": "Per identity: 65% fit, 15% known-only validation/calibration, remaining 20% test, separately for each seed.",
+    "unknown_split": "Images of held-out unknown identities are test-only. They are not used for fitting, exemplar storage, or threshold calibration.",
+    "same_test_split_for_methods": true,
+    "neuron_guard_source": "Exact guard functions/constants AST-extracted from Untitled36.ipynb",
+    "neuron_guard_thresholds": {
+      "min_similarity": 0.6,
+      "min_margin": 0.025,
+      "top_exemplars": 3
+    },
+    "svm_calibration": "Maximum predicted probability threshold is the 5th percentile on known-only validation images.",
+    "cnn": "Small CNN trained from scratch for 6 epochs per seed on the same training face crops; confidence threshold calibrated on known-only validation images.",
+    "important_caveat": "InceptionResnetV1 VGGFace2 pretraining may overlap with LFW identities. This benchmark does not establish decontaminated, general-purpose face-recognition performance."
+  },
+  "preprocessing": {
+    "selected_images": 670,
+    "processed_images": 670,
+    "crop_preprocessing_seconds": 0.625,
+    "facenet_embedding_seconds": 13.923,
+    "facenet_embedding_ms_per_image": 20.7807,
+    "face_counts": {
+      "George W Bush": 70,
+      "Colin Powell": 70,
+      "Tony Blair": 70,
+      "Donald Rumsfeld": 70,
+      "Gerhard Schroeder": 70,
+      "Ariel Sharon": 70,
+      "Hugo Chavez": 70,
+      "Junichiro Koizumi": 60,
+      "Jean Chretien": 30,
+      "John Ashcroft": 30,
+      "Jacques Chirac": 30,
+      "Serena Williams": 30
+    }
+  },
+  "guard_regression_checks": {
+    "passed": 4,
+    "checks": {
+      "strong_unique_match_accepted": true,
+      "ambiguous_match_rejected": true,
+      "weak_visual_match_rejected": true,
+      "missing_metadata_rejected": true
+    }
+  },
+  "aggregate_mean_and_population_std": {
+    "neuron_facenet_metadata_guard": {
+      "known_end_to_end_accuracy": {
+        "mean": 0.9886,
+        "std": 0.0041,
+        "min": 0.9829,
+        "max": 0.9915
+      },
+      "known_coverage": {
+        "mean": 0.9886,
+        "std": 0.0041,
+        "min": 0.9829,
+        "max": 0.9915
+      },
+      "known_selective_accuracy": {
+        "mean": 1,
+        "std": 0,
+        "min": 1,
+        "max": 1
+      },
+      "unknown_rejection_rate": {
+        "mean": 0.9944,
+        "std": 0.0079,
+        "min": 0.9833,
+        "max": 1
+      },
+      "unknown_false_accept_rate": {
+        "mean": 0.0056,
+        "std": 0.0079,
+        "min": 0,
+        "max": 0.0167
+      },
+      "safe_overall_rate": {
+        "mean": 0.9916,
+        "std": 0.006,
+        "min": 0.9831,
+        "max": 0.9958
+      }
+    },
+    "neuron_facenet_same_exemplars_without_guard": {
+      "known_end_to_end_accuracy": {
+        "mean": 0.9972,
+        "std": 0.004,
+        "min": 0.9915,
+        "max": 1
+      },
+      "known_coverage": {
+        "mean": 1,
+        "std": 0,
+        "min": 1,
+        "max": 1
+      },
+      "known_selective_accuracy": {
+        "mean": 0.9972,
+        "std": 0.004,
+        "min": 0.9915,
+        "max": 1
+      },
+      "unknown_rejection_rate": {
+        "mean": 0,
+        "std": 0,
+        "min": 0,
+        "max": 0
+      },
+      "unknown_false_accept_rate": {
+        "mean": 1,
+        "std": 0,
+        "min": 1,
+        "max": 1
+      },
+      "safe_overall_rate": {
+        "mean": 0.4923,
+        "std": 0.002,
+        "min": 0.4895,
+        "max": 0.4937
+      }
+    },
+    "svm_on_same_facenet_embeddings_calibrated_rejection": {
+      "known_end_to_end_accuracy": {
+        "mean": 0.9487,
+        "std": 0.0185,
+        "min": 0.9316,
+        "max": 0.9744
+      },
+      "known_coverage": {
+        "mean": 0.9487,
+        "std": 0.0185,
+        "min": 0.9316,
+        "max": 0.9744
+      },
+      "known_selective_accuracy": {
+        "mean": 1,
+        "std": 0,
+        "min": 1,
+        "max": 1
+      },
+      "unknown_rejection_rate": {
+        "mean": 1,
+        "std": 0,
+        "min": 1,
+        "max": 1
+      },
+      "unknown_false_accept_rate": {
+        "mean": 0,
+        "std": 0,
+        "min": 0,
+        "max": 0
+      },
+      "safe_overall_rate": {
+        "mean": 0.9747,
+        "std": 0.0091,
+        "min": 0.9662,
+        "max": 0.9873
+      }
+    },
+    "cnn_on_same_aligned_face_crops_closed_set": {
+      "known_end_to_end_accuracy": {
+        "mean": 0.2279,
+        "std": 0.0397,
+        "min": 0.188,
+        "max": 0.2821
+      },
+      "known_coverage": {
+        "mean": 1,
+        "std": 0,
+        "min": 1,
+        "max": 1
+      },
+      "known_selective_accuracy": {
+        "mean": 0.2279,
+        "std": 0.0397,
+        "min": 0.188,
+        "max": 0.2821
+      },
+      "unknown_rejection_rate": {
+        "mean": 0,
+        "std": 0,
+        "min": 0,
+        "max": 0
+      },
+      "unknown_false_accept_rate": {
+        "mean": 1,
+        "std": 0,
+        "min": 1,
+        "max": 1
+      },
+      "safe_overall_rate": {
+        "mean": 0.1125,
+        "std": 0.0196,
+        "min": 0.0928,
+        "max": 0.1392
+      }
+    },
+    "cnn_on_same_aligned_face_crops_calibrated_rejection": {
+      "known_end_to_end_accuracy": {
+        "mean": 0.2165,
+        "std": 0.0409,
+        "min": 0.1795,
+        "max": 0.2735
+      },
+      "known_coverage": {
+        "mean": 0.9231,
+        "std": 0.0185,
+        "min": 0.906,
+        "max": 0.9487
+      },
+      "known_selective_accuracy": {
+        "mean": 0.2351,
+        "std": 0.0467,
+        "min": 0.1892,
+        "max": 0.2991
+      },
+      "unknown_rejection_rate": {
+        "mean": 0.0389,
+        "std": 0.0208,
+        "min": 0.0167,
+        "max": 0.0667
+      },
+      "unknown_false_accept_rate": {
+        "mean": 0.9611,
+        "std": 0.0208,
+        "min": 0.9333,
+        "max": 0.9833
+      },
+      "safe_overall_rate": {
+        "mean": 0.1266,
+        "std": 0.0298,
+        "min": 0.1055,
+        "max": 0.1688
+      }
+    }
+  },
+  "per_seed": {
+    "2026": {
+      "neuron_guard": {
+        "known_accuracy": 0.9915,
+        "known_coverage": 0.9915,
+        "selective_accuracy": 1,
+        "unknown_rejection_rate": 1,
+        "safe_overall_rate": 0.9958
+      },
+      "svm_same_facenet_calibrated": {
+        "known_accuracy": 0.9316,
+        "known_coverage": 0.9316,
+        "selective_accuracy": 1,
+        "unknown_rejection_rate": 1,
+        "safe_overall_rate": 0.9662
+      },
+      "cnn_closed_set": {
+        "known_accuracy": 0.2137,
+        "unknown_rejection_rate": 0
+      },
+      "cnn_calibrated": {
+        "known_accuracy": 0.1966,
+        "known_coverage": 0.906,
+        "unknown_rejection_rate": 0.0167
+      }
+    },
+    "2027": {
+      "neuron_guard": {
+        "known_accuracy": 0.9915,
+        "known_coverage": 0.9915,
+        "selective_accuracy": 1,
+        "unknown_rejection_rate": 1,
+        "safe_overall_rate": 0.9958
+      },
+      "svm_same_facenet_calibrated": {
+        "known_accuracy": 0.9744,
+        "known_coverage": 0.9744,
+        "selective_accuracy": 1,
+        "unknown_rejection_rate": 1,
+        "safe_overall_rate": 0.9873
+      },
+      "cnn_closed_set": {
+        "known_accuracy": 0.188,
+        "unknown_rejection_rate": 0
+      },
+      "cnn_calibrated": {
+        "known_accuracy": 0.1795,
+        "known_coverage": 0.9487,
+        "unknown_rejection_rate": 0.0333
+      }
+    },
+    "2028": {
+      "neuron_guard": {
+        "known_accuracy": 0.9829,
+        "known_coverage": 0.9829,
+        "selective_accuracy": 1,
+        "unknown_rejection_rate": 0.9833,
+        "safe_overall_rate": 0.9831
+      },
+      "svm_same_facenet_calibrated": {
+        "known_accuracy": 0.9402,
+        "known_coverage": 0.9402,
+        "selective_accuracy": 1,
+        "unknown_rejection_rate": 1,
+        "safe_overall_rate": 0.9705
+      },
+      "cnn_closed_set": {
+        "known_accuracy": 0.2821,
+        "unknown_rejection_rate": 0
+      },
+      "cnn_calibrated": {
+        "known_accuracy": 0.2735,
+        "known_coverage": 0.9145,
+        "unknown_rejection_rate": 0.0667
+      }
+    }
+  },
+  "interpretation": {
+    "finding": "On this LFW protocol, guard-enabled FaceNet exemplar matching retained 98.86% of known-class images and correctly identified all accepted known predictions; mean rejection of held-out unknown identities was 99.44%. Without the guard, mean known accuracy rose to 99.72% but every unknown image was accepted.",
+    "comparison_with_same_features": "The calibrated SVM on identical FaceNet embeddings rejected all unknown test images, but its mean known-class coverage/accuracy was 94.87%, about 3.99 percentage points below guarded Neuron. Guarded Neuron's unknown rejection was 99.44%, 0.56 points below SVM; safe overall rate was 99.16% vs 97.47%.",
+    "cnn_comparison_limit": "The from-scratch CNN trained for only 6 epochs on 354 known training images averaged 22.79% known-class accuracy. This is a weak/undertrained baseline and cannot be used as proof that Neuron beats CNNs. A fair architecture-level CNN comparison needs a stronger training recipe or an equivalent pretrained CNN backbone.",
+    "external_validity_limit": "The benchmark covers only these selected LFW identities and may overlap identities with VGGFace2 pretraining. It tests the actual notebook guard policy with FaceNet embeddings, not every component of the broader Neuron architecture or general face recognition."
+  }
+}

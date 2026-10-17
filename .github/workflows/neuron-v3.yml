@@ -56,6 +56,8 @@ jobs:
           python-version: "3.11"
       - name: Install pretrained embedding baseline
         run: python -m pip install "sentence-transformers==6.1.0"
+      - name: Benchmark metadata guard on held-out image classes
+        run: python benchmarks/benchmark_metadata_guard_classification.py --json-output benchmarks/results/metadata-guard-classification-results.json
       - name: Compare Neuron with dense neural embedding retrieval
         run: python benchmarks/benchmark_neural_matrix_vs_graph.py --sizes 100,1000,5000 --json-output neuron-vs-matrix-results.json
       - name: Stress-test ambiguous, multi-hop, unseen paraphrase, and contradictory facts
@@ -76,6 +78,11 @@ jobs:
         with:
           name: neuron-stage-diagnostic-results
           path: stage-diagnostic-results.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: neuron-metadata-guard-classification-results
+          path: benchmarks/results/metadata-guard-classification-results.json
           if-no-files-found: error
   context-processing-trace:
     runs-on: ubuntu-latest

@@ -1,4 +1,4 @@
-name: Neuron V3 image baseline (isolated experiment)
+name: Neuron V3 image and embedding baselines (isolated experiment)
 
 on:
   push:
@@ -6,15 +6,17 @@ on:
       - experiment/neuron-v3-image-baseline-2026-10-17
     paths:
       - "experiments/neuron_v3_image_baseline.py"
+      - "experiments/neuron_v3_image_embedding_comparison.py"
       - ".github/workflows/neuron-v3-image-baseline.yml"
+      - ".github/workflows/neuron-v3-image-embedding.yml"
 
 permissions:
   contents: read
 
 jobs:
-  image-baseline:
+  image-baselines:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -32,9 +34,20 @@ jobs:
           python experiments/neuron_v3_image_baseline.py \
             --epochs 20 \
             --json-output artifacts/neuron-v3-image-baseline.json
-      - name: Upload reproducible results
+      - name: Compare raw pixel tokens vs learned CNN embeddings through real Neuron V3
+        run: |
+          python experiments/neuron_v3_image_embedding_comparison.py \
+            --epochs 20 \
+            --json-output artifacts/neuron-v3-image-embedding-results.json
+      - name: Upload baseline result
         uses: actions/upload-artifact@v4
         with:
           name: neuron-v3-image-baseline-results
           path: artifacts/neuron-v3-image-baseline.json
+          if-no-files-found: error
+      - name: Upload embedding comparison
+        uses: actions/upload-artifact@v4
+        with:
+          name: neuron-v3-image-embedding-results
+          path: artifacts/neuron-v3-image-embedding-results.json
           if-no-files-found: error

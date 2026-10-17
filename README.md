@@ -114,12 +114,12 @@ This offline test isolates the metadata guard on small grayscale image features;
 
 ## Real-face FaceNet benchmark
 
-The real-face open-set experiment is implemented in `benchmarks/benchmark_neuron_facenet_lfw.py`. It extracts the metadata-guard functions and thresholds directly from `Untitled36.ipynb`, uses LFW face images and the notebook's `MTCNN(image_size=160, margin=10)` + `InceptionResnetV1(pretrained="vggface2")` feature pipeline, and evaluates the guard alongside:
+The real-face open-set experiment is implemented in `benchmarks/benchmark_neuron_facenet_lfw.py`. It extracts the metadata-guard functions and thresholds directly from `Untitled36.ipynb`, uses LFW's pre-cropped/funneled face images, resized and normalized to FaceNet's input range, plus the notebook's `InceptionResnetV1(pretrained="vggface2")` feature pipeline, and evaluates the guard alongside:
 - the same FaceNet exemplar scores without the guard;
 - an RBF SVM trained on the same FaceNet embeddings;
-- a small CNN trained on the same MTCNN-aligned training face crops.
+- a small CNN trained on the same pre-cropped LFW training faces.
 
-The most frequent identities are selected once; eight identities are known to training and four are fully held out as unknowns. For each seed, known images split into fit/known-only calibration/test partitions. SVM and CNN confidence rejection thresholds use only the known validation partition. Unknown identities do not enter training or calibration. MTCNN misses are reported by identity; all compared methods evaluate the same successfully aligned test crops. The benchmark also records the VGGFace2/LFW pretraining-overlap caveat.
+The most frequent identities are selected once; eight identities are known to training and four are fully held out as unknowns. The first run using an extra MTCNN pass was correctly rejected because it detected zero faces in the already-cropped LFW images; the current script skips that redundant detector stage. For each seed, known images split into fit/known-only calibration/test partitions. SVM and CNN confidence rejection thresholds use only the known validation partition. Unknown identities do not enter training or calibration. MTCNN misses are reported by identity; all compared methods evaluate the same successfully aligned test crops. The benchmark also records the VGGFace2/LFW pretraining-overlap caveat.
 
 Run it with:
 

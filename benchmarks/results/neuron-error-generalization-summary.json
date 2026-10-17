@@ -1,0 +1,73 @@
+{
+  "status": "EXECUTED_LOCALLY",
+  "benchmark": "Neuron metadata-guard error-feedback generalization",
+  "generated_at_utc": "2026-10-17T02:42:00Z",
+  "dataset": "scikit-learn load_digits: 1,797 8x8 grayscale digit images",
+  "guard": {
+    "source": "Metadata-selection guard functions/constants extracted from Untitled36.ipynb",
+    "minimum_similarity": 0.6,
+    "minimum_margin": 0.025,
+    "top_exemplars": 3
+  },
+  "protocol": {
+    "seeds": [
+      2026,
+      2027,
+      2028,
+      2029,
+      2030,
+      2031,
+      2032,
+      2033,
+      2034,
+      2035
+    ],
+    "known_classes": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "held_out_unknown_classes": [
+      8,
+      9
+    ],
+    "train_test_split": "Stratified 75% training / 25% frozen test audit",
+    "feedback_rule": "Predict first. Reveal label after prediction. Add sample as exemplar only when wrong or rejected.",
+    "control": "Add the same number of exemplars per class from non-error feedback samples, keeping memory growth count-matched.",
+    "same_failure_pattern_test": "Frozen audit cases with a previously observed same true-class, prediction/rejection and rejection-reason signature."
+  },
+  "aggregate_mean_over_10_seeds": {
+    "known_audit_accuracy_baseline_pct": 97.76,
+    "known_audit_accuracy_after_error_feedback_pct": 97.85,
+    "known_audit_accuracy_after_random_control_pct": 97.76,
+    "error_feedback_accuracy_change_percentage_points": 0.085,
+    "random_control_accuracy_change_percentage_points": 0,
+    "unknown_rejection_baseline_pct": 54.2,
+    "unknown_rejection_after_error_feedback_pct": 56.14,
+    "unknown_rejection_after_random_control_pct": 54.43,
+    "unseen_same_failure_cases_per_seed_mean": 5.3,
+    "same_failure_case_fix_rate_error_feedback_pct": 7.75,
+    "same_failure_case_fix_rate_random_control_pct": 2,
+    "known_audit_repairs_per_seed_mean": 0.5,
+    "known_audit_regressions_per_seed_mean": 0.2
+  },
+  "per_seed_audit_accuracy_change_percentage_points": {
+    "2026": 0,
+    "2027": 0,
+    "2028": 0,
+    "2029": 0.56,
+    "2030": 0.28,
+    "2031": 0,
+    "2032": -0.27,
+    "2033": 0,
+    "2034": 0.28,
+    "2035": 0
+  },
+  "interpretation": "Weak positive signal only. Error-feedback accuracy improved slightly more than the count/class-matched random-memory control, but gains were small and inconsistent: 3 seeds improved, 6 were unchanged, and 1 regressed. The exact failure-pattern cohort was small. This does not establish strong generalization or human-like learning.",
+  "local_detailed_report": "error-generalization-results.json"
+}

@@ -96,6 +96,19 @@ python benchmarks/benchmark_context_variation.py --json-output context-processin
 This probe compares several wordings over identical facts, including ambiguous wording, explicit residence/workplace/birthplace cues, a multi-hop chain, and contradictory evidence. It records whether relation interpretations and the active node set change. It is a behavioral diagnostic—not a literal simulation of human neurobiology.
 
 
+## Metadata-guard image-classification benchmark
+
+Run the reproducible open-set guard benchmark from the repository root:
+
+```bash
+python -m pip install numpy scikit-learn torch
+python benchmarks/benchmark_metadata_guard_classification.py --json-output benchmarks/results/metadata-guard-classification-results.json
+```
+
+The benchmark extracts the current `_normalise_embedding` and `find_best_in_candidates` functions and thresholds directly from `Untitled36.ipynb`. It compares the guard-enabled decision, the same similarity ranking with guard thresholds disabled (ablation), and a small CNN on a shared held-out split. Digits 0–7 are known classes; digits 8–9 are withheld from training to probe unknown rejection. The JSON report includes accuracy, coverage, unknown rejection/false acceptance, per-query latency, thresholds, and guard regression checks. CI uploads the report as an artifact.
+
+This offline test isolates the metadata guard on small grayscale image features; it is **not** a FaceNet benchmark and does not replace a run on the original local face-recognition dataset/pretrained embeddings.
+
 ## Decision verification
 
 A decision policy can pass its proposed subject, typed relation, target, and the

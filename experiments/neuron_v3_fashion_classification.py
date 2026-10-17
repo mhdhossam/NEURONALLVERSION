@@ -114,14 +114,15 @@ def stratified_subset(images, labels, per_class, seed):
     return images[selected], labels[selected].astype(np.int64)
 
 
-def resize_14x14(image: np.ndarray) -> np.ndarray:
-    indices = np.rint(np.linspace(0, 27, 14)).astype(int)
+def resize_8x8(image: np.ndarray) -> np.ndarray:
+    """Fixed 8x8 spatial sample of the 28x28 input image."""
+    indices = np.rint(np.linspace(0, 27, 8)).astype(int)
     return image[np.ix_(indices, indices)]
 
 
 def encode_raw_pixels(image: np.ndarray, levels: int = 8) -> str:
-    """Fixed 14x14 positional-intensity tokens; no fitted visual features."""
-    reduced = resize_14x14(image).astype(np.float32)
+    """Fixed 8x8 positional-intensity tokens; no fitted visual features."""
+    reduced = resize_8x8(image).astype(np.float32)
     quantized = np.rint(np.clip(reduced, 0, 255) * (levels - 1) / 255).astype(int)
     flat = quantized.reshape(-1)
     return " ".join(f"px{i:03d}_q{int(v)}" for i, v in enumerate(flat))
@@ -163,8 +164,8 @@ def build_graph(images, labels, encoder, encoder_args=None):
 
 
 def graph_predict(graph, class_nodes, image, encoder, encoder_args=None, top_k=100):
-    query = encoder(image, **(encoder_args or {}))
     start = time.perf_counter()
+    query = encoder(image, **(encoder_args or {}))
     candidates = graph.find_candidates(query, top_k=top_k)
     seed_scores = {nid: score for nid, score in candidates}
     activated = graph.spread_activation(
@@ -276,9 +277,12 @@ def main():
     cnn_train_ms = (time.perf_counter() - start) * 1000.0
 
     model.eval()
+    embedding_start = time.perf_counter()
     with torch.no_grad():
         train_embeddings = model.embed(train_tensor).numpy().astype(np.float32)
         test_embeddings = model.embed(test_tensor).numpy().astype(np.float32)
+    embedding_extract_ms = (time.perf_counter() - embedding_start) * 1000.0
+    with torch.no_grad():
         start = time.perf_counter()
         cnn_predictions = model(test_tensor).argmax(dim=1).numpy().astype(np.int64)
         cnn_predict_ms = (time.perf_counter() - start) * 1000.0
@@ -329,9 +333,7 @@ def main():
             "graph_build_ms": round(emb_build_ms, 3),
             "graph_nodes": len(emb_graph.neurons),
             "graph_edges": len(emb_graph.synapses),
-            "embedding_extraction_ms_train_plus_test": round(
-                (cnn_train_ms * 0) + 0.0, 3
-            ),
+            "embedding_extraction_ms_train_plus_test": round(embedding_extract_ms, 3),
         },
         "cnn_classifier": {
             "accuracy": round(float(accuracy_score(y_test, cnn_predictions)), 4),
@@ -376,7 +378,7 @@ def main():
             "activation_hops": 1,
             "rl_used": False,
             "genetic_algorithm_used": False,
-            "raw_encoder": "fixed 14x14 spatial sample, 8 intensity levels",
+            "raw_encoder": "fixed 8x8 spatial sample, 8 intensity levels",
             "embedding_encoder": "64-D CNN penultimate activations, per-feature 8-quantile bins fit on training embeddings only",
         },
         "cnn": {"architecture": "two convolution blocks + 64-D embedding head", "epochs": args.epochs},

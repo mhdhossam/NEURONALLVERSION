@@ -113,6 +113,34 @@ jobs:
           path: benchmarks/results/neuron-facenet-lfw-results.json
           if-no-files-found: error
 
+  error-driven-learning:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+      OPENBLAS_NUM_THREADS: "1"
+      HF_HUB_DISABLE_PROGRESS_BARS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install FaceNet and dataset dependencies
+        run: python -m pip install "facenet-pytorch==2.6.0" scikit-learn
+      - name: Test learning from errors with untouched audit set
+        run: >-
+          python benchmarks/benchmark_neuron_error_learning.py
+          --seeds 2026,2027,2028
+          --max-known-per-person 70
+          --max-unknown-per-person 30
+          --json-output benchmarks/results/neuron-error-learning-results.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: neuron-error-learning-results
+          path: benchmarks/results/neuron-error-learning-results.json
+          if-no-files-found: error
+
   context-processing-trace:
     runs-on: ubuntu-latest
     steps:

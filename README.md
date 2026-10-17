@@ -112,6 +112,24 @@ The benchmark extracts the current `_normalise_embedding` and `find_best_in_cand
 
 This offline test isolates the metadata guard on small grayscale image features; it is **not** a FaceNet benchmark and does not replace a run on the original local face-recognition dataset/pretrained embeddings.
 
+## Real-face FaceNet benchmark
+
+The real-face open-set experiment is implemented in `benchmarks/benchmark_neuron_facenet_lfw.py`. It extracts the metadata-guard functions and thresholds directly from `Untitled36.ipynb`, uses LFW face images and the notebook's `MTCNN(image_size=160, margin=10)` + `InceptionResnetV1(pretrained="vggface2")` feature pipeline, and evaluates the guard alongside:
+- the same FaceNet exemplar scores without the guard;
+- an RBF SVM trained on the same FaceNet embeddings;
+- a small CNN trained on the same MTCNN-aligned training face crops.
+
+The most frequent identities are selected once; eight identities are known to training and four are fully held out as unknowns. For each seed, known images split into fit/known-only calibration/test partitions. SVM and CNN confidence rejection thresholds use only the known validation partition. Unknown identities do not enter training or calibration. MTCNN misses are reported by identity; all compared methods evaluate the same successfully aligned test crops. The benchmark also records the VGGFace2/LFW pretraining-overlap caveat.
+
+Run it with:
+
+```bash
+python -m pip install "facenet-pytorch==2.6.0" scikit-learn
+python benchmarks/benchmark_neuron_facenet_lfw.py --seeds 2026,2027,2028 --max-known-per-person 70 --max-unknown-per-person 30 --cnn-epochs 6 --json-output benchmarks/results/neuron-facenet-lfw-results.json
+```
+
+GitHub Actions runs this benchmark in the `facenet-neuron-open-set` job and uploads the JSON report as `neuron-facenet-lfw-results`. Do not claim general superiority based on one dataset/checkpoint; inspect known coverage, selective accuracy, unknown rejection and per-seed variability together.
+
 ## Decision verification
 
 A decision policy can pass its proposed subject, typed relation, target, and the

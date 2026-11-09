@@ -18,8 +18,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Run existing NEURON tests
-        run: python -m unittest discover -s tests -v
+      - name: Compile NEURON engine and benchmark
+        run: python -m py_compile neuron_core/engine.py benchmarks/benchmark_neuron_graph_matrix_v2.py
+      - name: Run existing repository regression tests
+        run: python -m unittest discover -s vision_research -p "test_*.py" -v
       - name: Run graph vs dense adjacency benchmark
         run: |
           python benchmarks/benchmark_neuron_graph_matrix_v2.py \

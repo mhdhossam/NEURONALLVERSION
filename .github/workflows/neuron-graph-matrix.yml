@@ -1,0 +1,32 @@
+name: NEURON Graph vs Dense Matrix Benchmark
+
+on:
+  push:
+    branches: ["experiment/neuron-vs-dense-matrix"]
+  pull_request:
+    branches: [main]
+    paths:
+      - "neuron_core/**"
+      - "benchmarks/benchmark_neuron_graph_matrix_v2.py"
+      - ".github/workflows/neuron-graph-matrix.yml"
+
+jobs:
+  graph-matrix-comparison:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run existing NEURON tests
+        run: python -m unittest discover -s tests -v
+      - name: Run graph vs dense adjacency benchmark
+        run: |
+          python benchmarks/benchmark_neuron_graph_matrix_v2.py \
+            --sizes 128,256,512,1024 --degree 8 --repeats 30 --hops 3 \
+            --json-output neuron-graph-matrix-v2-results.json
+      - name: Upload benchmark report
+        uses: actions/upload-artifact@v4
+        with:
+          name: neuron-graph-vs-dense-matrix
+          path: neuron-graph-matrix-v2-results.json

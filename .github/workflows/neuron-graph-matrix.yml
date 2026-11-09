@@ -7,7 +7,7 @@ on:
     branches: [main]
     paths:
       - "neuron_core/**"
-      - "benchmarks/benchmark_neuron_graph_vs_dense_matrix.py"
+      - "benchmarks/benchmark_neuron_graph_matrix_v2.py"
       - ".github/workflows/neuron-graph-matrix.yml"
 
 jobs:
@@ -24,7 +24,7 @@ jobs:
         run: |
           python benchmarks/benchmark_neuron_graph_vs_dense_matrix.py \
             --sizes 128,256,512,1024 --degree 8 --repeats 30 --hops 3 \
-            --json-output neuron-graph-matrix-results.json
+            --json-output neuron-graph-matrix-v2-results.json
       - name: Upload benchmark report
         uses: actions/upload-artifact@v4
         with:

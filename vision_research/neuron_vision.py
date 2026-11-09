@@ -100,8 +100,14 @@ def compile_prompt(prompt: str) -> tuple[VisualGraph, dict, list[dict]]:
             concepts.append(word)
     found: list[str] = []
     phrase = prompt.lower()
-    for phrase_name, kind in sorted(OBJECTS.items(), key=lambda item: -len(item[0])):
-        if re.search(r"\b" + re.escape(phrase_name) + r"\b", phrase) and kind not in found:
+    # Preserve the order in which objects appear in the prompt. For overlapping
+    # aliases at the same position, prefer the longest phrase (e.g. "sports car").
+    matches = []
+    for phrase_name, kind in OBJECTS.items():
+        for match in re.finditer(r"\b" + re.escape(phrase_name) + r"\b", phrase):
+            matches.append((match.start(), -(match.end() - match.start()), kind))
+    for _, _, kind in sorted(matches):
+        if kind not in found:
             found.append(kind)
     if not found:
         found = ["mountain", "sun", "tree"]

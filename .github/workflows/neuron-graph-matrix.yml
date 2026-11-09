@@ -18,16 +18,18 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Install benchmark dependency
+        run: python -m pip install numpy
       - name: Compile NEURON engine and benchmark
         run: python -m py_compile neuron_core/engine.py benchmarks/benchmark_neuron_graph_matrix_v2.py
       - name: Run core NEURON regression tests
         run: python -m unittest discover -s tests -v
       - name: Run vision prototype regression tests
         run: python -m unittest discover -s vision_research -p "test_*.py" -v
-      - name: Run graph vs dense adjacency benchmark
+      - name: Run graph vs matrix benchmark
         run: |
           python benchmarks/benchmark_neuron_graph_matrix_v2.py \
-            --sizes 128,256,512,1024 --degree 8 --repeats 30 --hops 3 \
+            --sizes 128,256,512,1024 --degrees 4,16,64 --repeats 20 --hops 3 \
             --json-output neuron-graph-matrix-v2-results.json
       - name: Upload benchmark report
         uses: actions/upload-artifact@v4

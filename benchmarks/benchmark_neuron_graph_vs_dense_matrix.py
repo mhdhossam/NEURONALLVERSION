@@ -101,7 +101,7 @@ def run_case(n: int, degree: int, repeats: int, hops: int):
         min_activation=floor, max_nodes=n, commit_snapshot=False,
     )
     dense_result = dense_matrix_propagate(matrix, seed_index, hops, damping, floor)
-    graph_set = {ids.index(item.neuron_id) for item in graph_result}
+    id_to_index = {neuron_id: index for index, neuron_id in enumerate(ids)}\n    graph_set = {id_to_index[item.neuron_id] for item in graph_result}
     if graph_set != dense_result:
         raise AssertionError(
             f"semantic mismatch at N={n}: graph={len(graph_set)}, dense={len(dense_result)}"

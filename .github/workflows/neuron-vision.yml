@@ -1,0 +1,30 @@
+name: NEURON Vision Phase-0
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "vision_research/**"
+      - ".github/workflows/neuron-vision.yml"
+  push:
+    branches: ["experiment/neuron-vision-graph-native"]
+
+jobs:
+  correctness-and-benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run correctness tests
+        run: python -m unittest discover -s vision_research -p "test_*.py" -v
+      - name: Run microbenchmark
+        run: |
+          cd vision_research
+          python benchmark.py | tee benchmark-results.json
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: neuron-vision-phase0-benchmark
+          path: vision_research/benchmark-results.json

@@ -67,11 +67,11 @@ class GraphOperationTests(unittest.TestCase):
         self.assertTrue(all(len(row) == 8 for row in result["tokens"]))
         self.assertEqual(result["attention_edges"], 12)  # 1 + 2 + 3 + 3 + 3
         self.assertEqual(result["parameter_edges"], 2 * (8 * 8 + 8 * 16 + 16 * 8))
-        self.assertTrue(
+        self.assertTrue(all(
             math.isfinite(value)
             for row in result["tokens"]
             for value in row
-        )
+        ))
 
 
 if __name__ == "__main__":

@@ -152,9 +152,9 @@ class GraphTransformerBlock:
         k = [apply_rope(self.k.forward(x), i) for i, x in enumerate(normed)]
         v = [self.v.forward(x) for x in normed]
         attended, attention_edges = self.attention.forward(q, k, v)
+        projected = [self.o.forward(row) for row in attended]
         residual = [
-            [tokens[i][d] + self.o.forward(attended[i])[d]
-             for d in range(self.hidden_size)]
+            [tokens[i][d] + projected[i][d] for d in range(self.hidden_size)]
             for i in range(len(tokens))
         ]
         result = []

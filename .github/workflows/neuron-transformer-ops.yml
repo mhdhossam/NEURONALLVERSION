@@ -21,7 +21,7 @@ jobs:
       - name: Compile prototype
         run: python -m py_compile transformer_research/graph_transformer.py benchmarks/benchmark_graph_transformer_ops.py
       - name: Run graph Transformer operation tests
-        run: python -m unittest tests.test_graph_transformer -v
+        run: python -m unittest discover -s tests -p "test_graph_transformer.py" -v
       - name: Run existing NEURON core tests
         run: python -m unittest discover -s tests -p "test_engine.py" -v
       - name: Benchmark sparse projection operation
